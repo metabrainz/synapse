@@ -1,0 +1,26 @@
+http:
+  port: 8080
+
+postgres:
+  host: localhost
+  port: 5432
+  user: synapse
+  password: synapse
+  dbname: synapse
+  sslmode: disable
+  max_conns: 20
+
+redis:
+  addr: localhost:6379
+  password: ""
+  db: 0
+
+rabbitmq:
+  url: amqp://guest:guest@localhost:5672/
+
+worker:
+  webhook_concurrency: 10
+  email_concurrency: 5
+
+relay:
+  outbox_poll_ms: 100

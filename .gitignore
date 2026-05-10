@@ -1,0 +1,32 @@
+# Binaries
+bin/
+dist/
+cmd/api/api
+cmd/worker/worker
+cmd/relay/relay
+cmd/cleanup/cleanup
+
+# Config with secrets
+config.yaml
+config.local.yaml
+*.local.yaml
+
+# Environment
+.env
+.env.*
+
+# Go
+*.test
+*.out
+coverage.html
+vendor/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
