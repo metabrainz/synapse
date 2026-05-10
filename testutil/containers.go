@@ -5,7 +5,13 @@ package testutil
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/metabrainz/synapse/internal/store"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	tcrabbitmq "github.com/testcontainers/testcontainers-go/modules/rabbitmq"
@@ -15,7 +21,16 @@ import (
 
 type CleanupFn func()
 
+var noop CleanupFn = func() {}
+
+// StartPostgres returns a Postgres DSN.
+// If SYNAPSE_TEST_PG_DSN is set, it is used directly (no Docker needed).
+// Otherwise a container is started via testcontainers.
 func StartPostgres(ctx context.Context) (dsn string, cleanup CleanupFn, err error) {
+	if dsn := os.Getenv("SYNAPSE_TEST_PG_DSN"); dsn != "" {
+		return dsn, noop, nil
+	}
+
 	c, err := tcpostgres.Run(ctx,
 		"postgres:16-alpine",
 		tcpostgres.WithDatabase("synapse_test"),
@@ -36,7 +51,13 @@ func StartPostgres(ctx context.Context) (dsn string, cleanup CleanupFn, err erro
 	return dsn, func() { c.Terminate(ctx) }, nil
 }
 
+// StartRedis returns a Redis address.
+// If SYNAPSE_TEST_REDIS_ADDR is set, it is used directly.
 func StartRedis(ctx context.Context) (addr string, cleanup CleanupFn, err error) {
+	if addr := os.Getenv("SYNAPSE_TEST_REDIS_ADDR"); addr != "" {
+		return addr, noop, nil
+	}
+
 	c, err := tcredis.Run(ctx, "redis:7-alpine")
 	if err != nil {
 		return "", nil, fmt.Errorf("start redis: %w", err)
@@ -49,7 +70,13 @@ func StartRedis(ctx context.Context) (addr string, cleanup CleanupFn, err error)
 	return addr, func() { c.Terminate(ctx) }, nil
 }
 
+// StartRabbitMQ returns an AMQP URL.
+// If SYNAPSE_TEST_RABBITMQ_URL is set, it is used directly.
 func StartRabbitMQ(ctx context.Context) (amqpURL string, cleanup CleanupFn, err error) {
+	if url := os.Getenv("SYNAPSE_TEST_RABBITMQ_URL"); url != "" {
+		return url, noop, nil
+	}
+
 	c, err := tcrabbitmq.Run(ctx, "rabbitmq:3-management-alpine")
 	if err != nil {
 		return "", nil, fmt.Errorf("start rabbitmq: %w", err)
@@ -60,4 +87,45 @@ func StartRabbitMQ(ctx context.Context) (amqpURL string, cleanup CleanupFn, err 
 		return "", nil, fmt.Errorf("rabbitmq url: %w", err)
 	}
 	return amqpURL, func() { c.Terminate(ctx) }, nil
+}
+
+// NewTestPool starts a real Postgres container, runs all migrations, and returns
+// a ready-to-use pool. Cleanup is registered via t.Cleanup.
+func NewTestPool(ctx context.Context, t *testing.T) *pgxpool.Pool {
+	t.Helper()
+
+	dsn, cleanup, err := StartPostgres(ctx)
+	if err != nil {
+		t.Fatalf("start postgres: %v", err)
+	}
+	t.Cleanup(cleanup)
+
+	// Anchor migrations path to this file's location — works regardless of
+	// which package calls this helper.
+	_, filename, _, _ := runtime.Caller(0)
+	migrationsDir := filepath.Join(filepath.Dir(filename), "..", "migrations")
+
+	if err := store.Migrate(toPgx5URL(dsn), migrationsDir); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("ping postgres: %v", err)
+	}
+
+	return pool
+}
+
+// toPgx5URL converts a postgres:// DSN to pgx5:// for golang-migrate.
+func toPgx5URL(dsn string) string {
+	if len(dsn) > 11 && dsn[:11] == "postgres://" {
+		return fmt.Sprintf("pgx5://%s", dsn[11:])
+	}
+	return dsn
 }
