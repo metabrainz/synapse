@@ -21,9 +21,16 @@ type PostgresConfig struct {
 	MaxConns int32  `yaml:"max_conns"`
 }
 
+// DSN returns the key=value format used by pgx pool.
 func (c PostgresConfig) DSN() string {
 	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		c.Host, c.Port, c.User, c.Password, c.DBName, c.SSLMode)
+}
+
+// URL returns the postgres:// URL format required by golang-migrate.
+func (c PostgresConfig) URL() string {
+	return fmt.Sprintf("pgx5://%s:%s@%s:%d/%s?sslmode=%s",
+		c.User, c.Password, c.Host, c.Port, c.DBName, c.SSLMode)
 }
 
 type RedisConfig struct {
