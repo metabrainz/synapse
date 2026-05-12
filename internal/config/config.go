@@ -44,7 +44,8 @@ type RabbitMQConfig struct {
 }
 
 type HTTPConfig struct {
-	Port int `yaml:"port"`
+	Port     int    `yaml:"port"`
+	AdminKey string `yaml:"admin_key"`
 }
 
 type WorkerConfig struct {
@@ -54,4 +55,5 @@ type WorkerConfig struct {
 
 type RelayConfig struct {
 	OutboxPollMs int `yaml:"outbox_poll_ms"`
+	Workers      int `yaml:"workers"`
 }

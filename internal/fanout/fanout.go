@@ -13,6 +13,12 @@ import (
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 )
 
+// Lookup resolves active channels for a given event. Satisfied by both
+// *subscriptions.Repo (direct DB) and *Cache (in-memory, preferred in production).
+type Lookup interface {
+	ListActiveForEvent(ctx context.Context, tenantID, userID, eventType string) ([]subscriptions.ActiveChannel, error)
+}
+
 // WorkerMessage is the payload written to the outbox and published to RabbitMQ.
 // Fields are snapshotted at fan-out time — if a user updates their webhook URL
 // after an event is queued, in-flight messages use the old config. Intentional.
@@ -45,20 +51,30 @@ func maxAttempts(channelType string) int {
 }
 
 type Fanout struct {
-	subs *subscriptions.Repo
+	subs Lookup
 }
 
-func New(subs *subscriptions.Repo) *Fanout {
+func New(subs Lookup) *Fanout {
 	return &Fanout{subs: subs}
 }
 
+// Preview returns the number of channels that would receive this event
+// without writing anything — used by the dry_run ingest path.
+func (f *Fanout) Preview(ctx context.Context, tenantID, userID, eventType string) (int, error) {
+	channels, err := f.subs.ListActiveForEvent(ctx, tenantID, userID, eventType)
+	if err != nil {
+		return 0, fmt.Errorf("list subscriptions: %w", err)
+	}
+	return len(channels), nil
+}
+
 // Fan creates one delivery + one outbox row per active subscription matching
-// the event. Must be called inside a store.WithTx callback — all writes are
-// atomic with the event insert.
-func (f *Fanout) Fan(ctx context.Context, q store.Querier, ev events.Event) error {
+// the event. Returns the number of deliveries created.
+// Must be called inside a store.WithTx callback — all writes are atomic with the event insert.
+func (f *Fanout) Fan(ctx context.Context, q store.Querier, ev events.Event) (int, error) {
 	channels, err := f.subs.ListActiveForEvent(ctx, ev.TenantID, ev.UserID, ev.EventType)
 	if err != nil {
-		return fmt.Errorf("list subscriptions: %w", err)
+		return 0, fmt.Errorf("list subscriptions: %w", err)
 	}
 
 	for _, ch := range channels {
@@ -70,7 +86,7 @@ func (f *Fanout) Fan(ctx context.Context, q store.Querier, ev events.Event) erro
 			MaxAttempts: maxAtt,
 		})
 		if err != nil {
-			return fmt.Errorf("insert delivery (channel %d): %w", ch.ChannelID, err)
+			return 0, fmt.Errorf("insert delivery (channel %d): %w", ch.ChannelID, err)
 		}
 
 		raw, err := json.Marshal(WorkerMessage{
@@ -89,13 +105,13 @@ func (f *Fanout) Fan(ctx context.Context, q store.Querier, ev events.Event) erro
 			CreatedAt:     ev.CreatedAt,
 		})
 		if err != nil {
-			return fmt.Errorf("marshal worker message: %w", err)
+			return 0, fmt.Errorf("marshal worker message: %w", err)
 		}
 
 		if err := outbox.Insert(ctx, q, ch.ChannelType, raw); err != nil {
-			return fmt.Errorf("insert outbox (channel %d): %w", ch.ChannelID, err)
+			return 0, fmt.Errorf("insert outbox (channel %d): %w", ch.ChannelID, err)
 		}
 	}
 
-	return nil
+	return len(channels), nil
 }

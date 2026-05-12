@@ -102,10 +102,19 @@ func (r *Repo) ListActiveForEvent(ctx context.Context, tenantID, userID, eventTy
 	return out, rows.Err()
 }
 
-// ListAll loads every active subscription — used to warm the fanout cache on startup.
-func (r *Repo) ListAll(ctx context.Context) ([]ActiveChannel, error) {
+// CacheEntry is a fully-qualified subscription row used to populate the fanout cache.
+type CacheEntry struct {
+	TenantID  string
+	UserID    string
+	EventType string
+	ActiveChannel
+}
+
+// ListAllForCache loads every active subscription with full routing context.
+// Used to warm the in-memory fanout cache on startup and after LISTEN/NOTIFY.
+func (r *Repo) ListAllForCache(ctx context.Context) ([]CacheEntry, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT c.id, c.type, c.config, s.config
+		`SELECT c.tenant_id, c.user_id, s.event_type, c.id, c.type, c.config, s.config
 		 FROM subscriptions s
 		 JOIN channels c ON c.id = s.channel_id
 		 WHERE c.enabled = TRUE AND c.status = 'active' AND s.enabled = TRUE`,
@@ -115,13 +124,16 @@ func (r *Repo) ListAll(ctx context.Context) ([]ActiveChannel, error) {
 	}
 	defer rows.Close()
 
-	var out []ActiveChannel
+	var out []CacheEntry
 	for rows.Next() {
-		var ac ActiveChannel
-		if err := rows.Scan(&ac.ChannelID, &ac.ChannelType, &ac.Config, &ac.SubConfig); err != nil {
+		var e CacheEntry
+		if err := rows.Scan(
+			&e.TenantID, &e.UserID, &e.EventType,
+			&e.ChannelID, &e.ChannelType, &e.Config, &e.SubConfig,
+		); err != nil {
 			return nil, err
 		}
-		out = append(out, ac)
+		out = append(out, e)
 	}
 	return out, rows.Err()
 }

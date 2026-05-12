@@ -3,6 +3,7 @@ module github.com/metabrainz/synapse
 go 1.25.6
 
 require (
+	github.com/go-chi/chi/v5 v5.2.5
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/jackc/pgx/v5 v5.5.4
 	github.com/rabbitmq/amqp091-go v1.9.0

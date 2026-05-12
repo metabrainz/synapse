@@ -70,6 +70,9 @@ func setDefaults(cfg *Config) {
 	if cfg.Relay.OutboxPollMs == 0 {
 		cfg.Relay.OutboxPollMs = 100
 	}
+	if cfg.Relay.Workers == 0 {
+		cfg.Relay.Workers = 4
+	}
 	if cfg.Worker.WebhookConcurrency == 0 {
 		cfg.Worker.WebhookConcurrency = 10
 	}
