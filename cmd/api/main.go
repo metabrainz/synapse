@@ -16,7 +16,6 @@ import (
 	"github.com/metabrainz/synapse/internal/config"
 	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/fanout"
-	"github.com/metabrainz/synapse/internal/ratelimit"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/channels"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
@@ -62,10 +61,9 @@ func main() {
 
 	fan := fanout.New(cache)
 	deduper := dedup.New(rdb)
-	limiter := ratelimit.New(rdb, 200, 100) // burst=200, 100 req/s sustained
 
 	router := api.NewRouter(
-		api.Config{AdminKey: cfg.HTTP.AdminKey, Limiter: limiter},
+		api.Config{AdminKey: cfg.HTTP.AdminKey},
 		pool,
 		tenantRepo,
 		channelRepo,

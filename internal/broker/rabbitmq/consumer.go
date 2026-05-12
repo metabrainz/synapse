@@ -100,3 +100,44 @@ func (c *Consumer) Close() error {
 	}
 	return nil
 }
+
+// ConsumeQueue is a simple blocking consume loop for an arbitrary named queue.
+// Returns when ctx is cancelled or the AMQP channel closes.
+func ConsumeQueue(ctx context.Context, url, queue string, prefetch int, handler Handler) error {
+	conn, err := amqp.Dial(url)
+	if err != nil {
+		return fmt.Errorf("amqp dial: %w", err)
+	}
+	defer conn.Close()
+
+	ch, err := conn.Channel()
+	if err != nil {
+		return fmt.Errorf("amqp channel: %w", err)
+	}
+	defer ch.Close()
+
+	if err := ch.Qos(prefetch, 0, false); err != nil {
+		return fmt.Errorf("set qos: %w", err)
+	}
+
+	msgs, err := ch.Consume(queue, "", false, false, false, false, nil)
+	if err != nil {
+		return fmt.Errorf("consume %s: %w", queue, err)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case msg, ok := <-msgs:
+			if !ok {
+				return fmt.Errorf("amqp channel closed")
+			}
+			if err := handler(ctx, msg.Body); err != nil {
+				msg.Reject(false)
+			} else {
+				msg.Ack(false)
+			}
+		}
+	}
+}

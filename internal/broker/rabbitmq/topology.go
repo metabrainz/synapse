@@ -9,6 +9,12 @@ import (
 // V1 channel types. Adding a new type means adding it here and writing an adapter.
 var ChannelTypes = []string{"webhook", "email"}
 
+const (
+	ExchangeIngest = "events.ingest"
+	QueueIngest    = "events.ingest"
+	RoutingKeyIngest = "event"
+)
+
 // Setup dials AMQP, declares full topology, then closes the connection.
 // Call once at service startup before starting the relay or worker.
 func Setup(url string) error {
@@ -51,6 +57,22 @@ func DeclareTopology(ch *amqp.Channel, channelTypes []string) error {
 		if err := declareQueueSet(ch, ct); err != nil {
 			return fmt.Errorf("declare queue set %s: %w", ct, err)
 		}
+	}
+	if err := declareIngestTopology(ch); err != nil {
+		return fmt.Errorf("declare ingest topology: %w", err)
+	}
+	return nil
+}
+
+func declareIngestTopology(ch *amqp.Channel) error {
+	if err := ch.ExchangeDeclare(ExchangeIngest, "direct", true, false, false, false, nil); err != nil {
+		return fmt.Errorf("declare exchange %s: %w", ExchangeIngest, err)
+	}
+	if _, err := ch.QueueDeclare(QueueIngest, true, false, false, false, nil); err != nil {
+		return fmt.Errorf("declare queue %s: %w", QueueIngest, err)
+	}
+	if err := ch.QueueBind(QueueIngest, RoutingKeyIngest, ExchangeIngest, false, nil); err != nil {
+		return fmt.Errorf("bind %s: %w", QueueIngest, err)
 	}
 	return nil
 }

@@ -8,10 +8,15 @@ import (
 	"os/signal"
 	"syscall"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
 	"github.com/metabrainz/synapse/internal/config"
+	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/ingest"
 	"github.com/metabrainz/synapse/internal/relay"
 	"github.com/metabrainz/synapse/internal/store"
+	"github.com/metabrainz/synapse/internal/store/subscriptions"
 )
 
 func main() {
@@ -46,13 +51,25 @@ func main() {
 	}
 	defer pub.Close()
 
+	subRepo := subscriptions.New(pool)
+	fan := fanout.New(subRepo)
+	ingestConsumer := ingest.NewConsumer(pool, fan)
+
+	g, ctx := errgroup.WithContext(ctx)
+
 	slog.Info("relay: starting", "workers", cfg.Relay.Workers, "poll_ms", cfg.Relay.OutboxPollMs)
 
-	if err := relay.Run(ctx, pool, pub, cfg.Relay.Workers, cfg.Relay.OutboxPollMs); err != nil {
-		if ctx.Err() == nil {
-			slog.Error("relay", "err", err)
-			os.Exit(1)
-		}
+	g.Go(func() error {
+		return relay.Run(ctx, pool, pub, cfg.Relay.Workers, cfg.Relay.OutboxPollMs)
+	})
+	g.Go(func() error {
+		slog.Info("relay: ingest consumer starting")
+		return ingestConsumer.Run(ctx, cfg.RabbitMQ.URL)
+	})
+
+	if err := g.Wait(); err != nil && ctx.Err() == nil {
+		slog.Error("relay", "err", err)
+		os.Exit(1)
 	}
 
 	slog.Info("relay: stopped")
