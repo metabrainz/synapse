@@ -9,6 +9,13 @@ import (
 	"github.com/metabrainz/synapse/internal/store"
 )
 
+const (
+	StatusPending   = "PENDING"
+	StatusRetrying  = "RETRYING"
+	StatusDelivered = "DELIVERED"
+	StatusDead      = "DEAD"
+)
+
 type Delivery struct {
 	ID          int64
 	EventID     int64
@@ -39,7 +46,7 @@ func UpdateStatus(ctx context.Context, q store.Querier, id int64, status string,
 		 SET status      = $2,
 		     attempt     = $3,
 		     last_error  = $4,
-		     delivered_at = CASE WHEN $2 = 'delivered' THEN NOW() ELSE NULL END,
+		     delivered_at = CASE WHEN $2 = 'DELIVERED' THEN NOW() ELSE NULL END,
 		     updated_at  = NOW()
 		 WHERE id = $1`,
 		id, status, attempt, lastErr,

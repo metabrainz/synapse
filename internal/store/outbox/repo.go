@@ -24,11 +24,15 @@ func Insert(ctx context.Context, q store.Querier, routingKey string, payload jso
 	return err
 }
 
-// FetchPending returns up to limit rows, oldest first. Called by the relay on each tick.
+// FetchPending returns up to limit rows, oldest first, with FOR UPDATE SKIP LOCKED
+// so multiple relay instances each claim a disjoint batch and never double-publish.
 func FetchPending(ctx context.Context, q store.Querier, limit int) ([]Message, error) {
 	rows, err := q.Query(ctx,
 		`SELECT id, routing_key, payload, created_at
-		 FROM outbox ORDER BY created_at ASC LIMIT $1`,
+		 FROM outbox
+		 ORDER BY created_at ASC
+		 LIMIT $1
+		 FOR UPDATE SKIP LOCKED`,
 		limit,
 	)
 	if err != nil {

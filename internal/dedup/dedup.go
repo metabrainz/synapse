@@ -8,7 +8,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const defaultTTL = 24 * time.Hour
+const defaultTTL = 30 * time.Minute
 
 type Deduper struct {
 	rdb *redis.Client

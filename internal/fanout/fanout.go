@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/deliveries"
@@ -13,7 +14,8 @@ import (
 )
 
 // WorkerMessage is the payload written to the outbox and published to RabbitMQ.
-// The worker reads this to know what to deliver and where.
+// Fields are snapshotted at fan-out time — if a user updates their webhook URL
+// after an event is queued, in-flight messages use the old config. Intentional.
 type WorkerMessage struct {
 	DeliveryID    int64           `json:"delivery_id"`
 	ChannelID     int64           `json:"channel_id"`
@@ -22,12 +24,17 @@ type WorkerMessage struct {
 	SubConfig     json.RawMessage `json:"sub_config"`
 	EventID       int64           `json:"event_id"`
 	EventType     string          `json:"event_type"`
+	TenantID      string          `json:"tenant_id"`
+	UserID        string          `json:"user_id"`
 	Payload       json.RawMessage `json:"payload"`
+	Attempt       int             `json:"attempt"`
+	MaxAttempts   int             `json:"max_attempts"`
+	CreatedAt     time.Time       `json:"created_at"`
 }
 
 var maxAttemptsByType = map[string]int{
 	"webhook": 5,
-	"email":   3,
+	"email":   2,
 }
 
 func maxAttempts(channelType string) int {
@@ -55,11 +62,12 @@ func (f *Fanout) Fan(ctx context.Context, q store.Querier, ev events.Event) erro
 	}
 
 	for _, ch := range channels {
+		maxAtt := maxAttempts(ch.ChannelType)
 		deliveryID, err := deliveries.Insert(ctx, q, deliveries.Delivery{
 			EventID:     ev.ID,
 			ChannelID:   ch.ChannelID,
 			ChannelType: ch.ChannelType,
-			MaxAttempts: maxAttempts(ch.ChannelType),
+			MaxAttempts: maxAtt,
 		})
 		if err != nil {
 			return fmt.Errorf("insert delivery (channel %d): %w", ch.ChannelID, err)
@@ -73,13 +81,18 @@ func (f *Fanout) Fan(ctx context.Context, q store.Querier, ev events.Event) erro
 			SubConfig:     ch.SubConfig,
 			EventID:       ev.ID,
 			EventType:     ev.EventType,
+			TenantID:      ev.TenantID,
+			UserID:        ev.UserID,
 			Payload:       ev.Payload,
+			Attempt:       0,
+			MaxAttempts:   maxAtt,
+			CreatedAt:     ev.CreatedAt,
 		})
 		if err != nil {
 			return fmt.Errorf("marshal worker message: %w", err)
 		}
 
-		if err := outbox.Insert(ctx, q, "synapse."+ch.ChannelType, raw); err != nil {
+		if err := outbox.Insert(ctx, q, ch.ChannelType, raw); err != nil {
 			return fmt.Errorf("insert outbox (channel %d): %w", ch.ChannelID, err)
 		}
 	}
