@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -8,16 +9,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Load reads a YAML config file and overlays environment variable overrides.
+// If the file does not exist, env vars and defaults are used without error.
 func Load(path string) (*Config, error) {
+	var cfg Config
+
 	f, err := os.Open(path)
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("open config: %w", err)
 	}
-	defer f.Close()
-
-	var cfg Config
-	if err := yaml.NewDecoder(f).Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("decode config: %w", err)
+	if err == nil {
+		defer f.Close()
+		if err := yaml.NewDecoder(f).Decode(&cfg); err != nil {
+			return nil, fmt.Errorf("decode config: %w", err)
+		}
 	}
 
 	applyEnv(&cfg)
@@ -31,11 +36,25 @@ func applyEnv(cfg *Config) {
 			cfg.HTTP.Port = n
 		}
 	}
+	if v := os.Getenv("SYNAPSE_ADMIN_KEY"); v != "" {
+		cfg.HTTP.AdminKey = v
+	}
 	if v := os.Getenv("SYNAPSE_PG_HOST"); v != "" {
 		cfg.Postgres.Host = v
 	}
+	if v := os.Getenv("SYNAPSE_PG_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Postgres.Port = n
+		}
+	}
+	if v := os.Getenv("SYNAPSE_PG_USER"); v != "" {
+		cfg.Postgres.User = v
+	}
 	if v := os.Getenv("SYNAPSE_PG_PASSWORD"); v != "" {
 		cfg.Postgres.Password = v
+	}
+	if v := os.Getenv("SYNAPSE_PG_DBNAME"); v != "" {
+		cfg.Postgres.DBName = v
 	}
 	if v := os.Getenv("SYNAPSE_REDIS_ADDR"); v != "" {
 		cfg.Redis.Addr = v

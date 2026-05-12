@@ -9,6 +9,7 @@ import (
 	"github.com/metabrainz/synapse/internal/api/middleware"
 	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/ratelimit"
 	"github.com/metabrainz/synapse/internal/store/channels"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 	"github.com/metabrainz/synapse/internal/store/tenants"
@@ -16,6 +17,7 @@ import (
 
 type Config struct {
 	AdminKey string
+	Limiter  *ratelimit.Limiter // nil = no rate limiting
 }
 
 func NewRouter(
@@ -50,9 +52,19 @@ func NewRouter(
 
 	// Tenant-authenticated routes
 	r.With(middleware.Authenticate(tenantRepo)).Route("/v1", func(r chi.Router) {
-		// Event ingestion
+		// Event ingestion — rate limited per tenant when limiter is configured
 		ing := &ingestHandler{pool: pool, fan: fan, deduper: deduper}
-		r.Post("/events", ing.ServeHTTP)
+		if cfg.Limiter != nil {
+			tenantID := func(r *http.Request) string {
+				if t := middleware.TenantFromContext(r.Context()); t != nil {
+					return t.ID
+				}
+				return ""
+			}
+			r.With(cfg.Limiter.Middleware(tenantID)).Post("/events", ing.ServeHTTP)
+		} else {
+			r.Post("/events", ing.ServeHTTP)
+		}
 		r.Get("/events/{event_id}/deliveries", (&deliveriesHandler{pool: pool}).listByEvent)
 
 		// Channel management
