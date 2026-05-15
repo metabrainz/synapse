@@ -3,20 +3,18 @@ package subscriptions
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Subscription struct {
-	ID        int64
-	ChannelID int64
-	EventType string
-	Enabled   bool
-	Config    json.RawMessage
-	CreatedAt time.Time
+	ID        int64           `json:"id"`
+	ChannelID int64           `json:"channel_id"`
+	EventType string          `json:"event_type"`
+	Enabled   bool            `json:"enabled"`
+	Config    json.RawMessage `json:"config"`
+	CreatedAt time.Time       `json:"created_at"`
 }
 
 // ActiveChannel is the minimal shape the fanout needs per matched subscription.
@@ -138,13 +136,3 @@ func (r *Repo) ListAllForCache(ctx context.Context) ([]CacheEntry, error) {
 	return out, rows.Err()
 }
 
-type scanner interface{ Scan(dest ...any) error }
-
-func scan(s scanner) (*Subscription, error) {
-	var sub Subscription
-	err := s.Scan(&sub.ID, &sub.ChannelID, &sub.EventType, &sub.Enabled, &sub.Config, &sub.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	return &sub, err
-}

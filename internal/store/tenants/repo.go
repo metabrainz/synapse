@@ -15,10 +15,10 @@ var ErrNotFound = errors.New("not found")
 var ErrDuplicate = errors.New("duplicate")
 
 type Tenant struct {
-	ID        string
-	APIKey    string
-	Name      string
-	CreatedAt time.Time
+	ID        string    `json:"id"`
+	APIKey    string    `json:"api_key"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Repo struct{ pool *pgxpool.Pool }

@@ -81,10 +81,10 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 
 // PublishRetry sends a message to the retry exchange with a per-message TTL (ms).
 // The retry queue's DLX routes it back to the main queue once the TTL expires.
-func (c *Consumer) PublishRetry(channelType string, body []byte, ttlMs int64) error {
+func (c *Consumer) PublishRetry(ctx context.Context, channelType string, body []byte, ttlMs int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.ch.Publish(exchangeRetry, channelType, false, false, amqp.Publishing{
+	return c.ch.PublishWithContext(ctx, exchangeRetry, channelType, false, false, amqp.Publishing{
 		ContentType:  "application/json",
 		Body:         body,
 		DeliveryMode: amqp.Persistent,

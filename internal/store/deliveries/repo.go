@@ -17,17 +17,17 @@ const (
 )
 
 type Delivery struct {
-	ID          int64
-	EventID     int64
-	ChannelID   int64
-	ChannelType string
-	Status      string
-	Attempt     int
-	MaxAttempts int
-	LastError   *string
-	DeliveredAt *time.Time
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          int64      `json:"id"`
+	EventID     int64      `json:"event_id"`
+	ChannelID   int64      `json:"channel_id"`
+	ChannelType string     `json:"channel_type"`
+	Status      string     `json:"status"`
+	Attempt     int        `json:"attempt"`
+	MaxAttempts int        `json:"max_attempts"`
+	LastError   *string    `json:"last_error,omitempty"`
+	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 func Insert(ctx context.Context, q store.Querier, d Delivery) (int64, error) {

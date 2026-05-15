@@ -9,16 +9,22 @@ type Config struct {
 	HTTP     HTTPConfig     `yaml:"http"`
 	Worker   WorkerConfig   `yaml:"worker"`
 	Relay    RelayConfig    `yaml:"relay"`
+	Ingest   IngestConfig   `yaml:"ingest"`
 }
 
 type PostgresConfig struct {
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
-	DBName   string `yaml:"dbname"`
-	SSLMode  string `yaml:"sslmode"`
-	MaxConns int32  `yaml:"max_conns"`
+	Host      string `yaml:"host"`
+	Port      int    `yaml:"port"`
+	User      string `yaml:"user"`
+	Password  string `yaml:"password"`
+	DBName    string `yaml:"dbname"`
+	SSLMode   string `yaml:"sslmode"`
+	PgBouncer bool   `yaml:"pgbouncer"`
+	// DirectDSN is a direct Postgres connection string (bypassing PgBouncer) used
+	// exclusively for LISTEN/NOTIFY. PgBouncer transaction mode drops session-level
+	// commands like LISTEN, so the subscription cache needs a persistent raw connection.
+	// Leave empty when not using PgBouncer — NewCache derives it from the pool config.
+	DirectDSN string `yaml:"direct_dsn"`
 }
 
 // DSN returns the key=value format used by pgx pool.
@@ -46,6 +52,7 @@ type RabbitMQConfig struct {
 type HTTPConfig struct {
 	Port     int    `yaml:"port"`
 	AdminKey string `yaml:"admin_key"`
+	DBConns  int32  `yaml:"db_conns"`
 }
 
 type WorkerConfig struct {
@@ -56,4 +63,8 @@ type WorkerConfig struct {
 type RelayConfig struct {
 	OutboxPollMs int `yaml:"outbox_poll_ms"`
 	Workers      int `yaml:"workers"`
+}
+
+type IngestConfig struct {
+	Workers int `yaml:"workers"`
 }

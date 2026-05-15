@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 )
 
@@ -39,6 +40,10 @@ func (h *subscriptionsHandler) create(w http.ResponseWriter, r *http.Request) {
 		Config:    body.Config,
 	})
 	if err != nil {
+		if store.IsUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "subscription already exists for this channel and event type")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to create subscription")
 		return
 	}

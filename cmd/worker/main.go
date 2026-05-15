@@ -31,7 +31,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	pool, err := store.NewPool(ctx, cfg.Postgres)
+	pool, err := store.NewPool(ctx, cfg.Postgres, int32(cfg.Worker.WebhookConcurrency))
 	if err != nil {
 		slog.Error("postgres", "err", err)
 		os.Exit(1)

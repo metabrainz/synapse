@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -10,12 +11,20 @@ import (
 	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/store/channels"
+	"github.com/metabrainz/synapse/internal/store/eventtypes"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 	"github.com/metabrainz/synapse/internal/store/tenants"
 )
 
+// HealthChecks holds optional probe functions for /health/ready.
+type HealthChecks struct {
+	Redis func(ctx context.Context) error
+	AMQP  func(ctx context.Context) error
+}
+
 type Config struct {
 	AdminKey string
+	Health   HealthChecks
 }
 
 func NewRouter(
@@ -24,6 +33,7 @@ func NewRouter(
 	tenantRepo *tenants.Repo,
 	channelRepo *channels.Repo,
 	subRepo *subscriptions.Repo,
+	etRepo *eventtypes.Repo,
 	fan *fanout.Fanout,
 	deduper *dedup.Deduper,
 ) http.Handler {
@@ -33,19 +43,39 @@ func NewRouter(
 
 	// Health
 	r.Get("/health/ready", func(w http.ResponseWriter, r *http.Request) {
-		if err := pool.Ping(r.Context()); err != nil {
-			writeError(w, http.StatusServiceUnavailable, "database unavailable")
+		ctx := r.Context()
+		if err := pool.Ping(ctx); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "postgres unavailable")
 			return
+		}
+		if cfg.Health.Redis != nil {
+			if err := cfg.Health.Redis(ctx); err != nil {
+				writeError(w, http.StatusServiceUnavailable, "redis unavailable")
+				return
+			}
+		}
+		if cfg.Health.AMQP != nil {
+			if err := cfg.Health.AMQP(ctx); err != nil {
+				writeError(w, http.StatusServiceUnavailable, "rabbitmq unavailable")
+				return
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	// Admin — separate key, not tenant auth
+	// Admin routes
 	admin := &adminHandler{repo: tenantRepo}
+
+	// Event types routes
+	et := &eventTypesHandler{repo: etRepo}
+
 	r.With(middleware.RequireAdminKey(cfg.AdminKey)).Route("/v1/admin", func(r chi.Router) {
 		r.Post("/tenants", admin.create)
 		r.Get("/tenants", admin.list)
 		r.Post("/tenants/{id}/rotate-key", admin.rotateKey)
+		r.Post("/tenants/{id}/event-types", et.register)
+		r.Get("/tenants/{id}/event-types", et.list)
+		r.Delete("/tenants/{id}/event-types/{event_type}", et.delete)
 	})
 
 	// Tenant-authenticated routes

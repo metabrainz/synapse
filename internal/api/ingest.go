@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -102,6 +103,14 @@ func (h *ingestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if store.IsUniqueViolation(err) {
 			writeJSON(w, http.StatusOK, map[string]any{"deduplicated": true})
 			return
+		}
+		if store.IsForeignKeyViolation(err) {
+			writeError(w, http.StatusBadRequest, "event type not registered for this tenant")
+			return
+		}
+		// Suppress noise from clients that cancelled mid-request
+		if ctx.Err() == nil {
+			slog.ErrorContext(ctx, "event ingestion failed", "tenant", tenant.ID, "err", err)
 		}
 		writeError(w, http.StatusInternalServerError, "event ingestion failed")
 		return

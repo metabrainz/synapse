@@ -11,6 +11,7 @@ import (
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/events"
+	"golang.org/x/sync/errgroup"
 )
 
 // Message is the payload producers publish to the events.ingest exchange.
@@ -32,9 +33,16 @@ func NewConsumer(pool *pgxpool.Pool, fan *fanout.Fanout) *Consumer {
 	return &Consumer{pool: pool, fan: fan}
 }
 
-// Run blocks until ctx is cancelled, processing ingest messages from RabbitMQ.
-func (c *Consumer) Run(ctx context.Context, amqpURL string) error {
-	return rabbitmq.ConsumeQueue(ctx, amqpURL, rabbitmq.QueueIngest, 10, c.handle)
+// Run starts workers goroutines, each with its own AMQP connection and channel.
+// Each goroutine processes one message at a time; workers controls DB concurrency.
+func (c *Consumer) Run(ctx context.Context, amqpURL string, workers int) error {
+	g, gctx := errgroup.WithContext(ctx)
+	for range workers {
+		g.Go(func() error {
+			return rabbitmq.ConsumeQueue(gctx, amqpURL, rabbitmq.QueueIngest, 1, c.handle)
+		})
+	}
+	return g.Wait()
 }
 
 func (c *Consumer) handle(ctx context.Context, body []byte) error {

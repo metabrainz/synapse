@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -43,6 +44,10 @@ func (h *adminHandler) create(w http.ResponseWriter, r *http.Request) {
 		APIKey: apiKey,
 		Name:   body.Name,
 	}); err != nil {
+		if errors.Is(err, tenants.ErrDuplicate) {
+			writeError(w, http.StatusConflict, "tenant already exists")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to create tenant")
 		return
 	}

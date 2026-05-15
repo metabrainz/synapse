@@ -14,13 +14,16 @@ const (
 	exchangeDead  = "deliveries.dead"
 )
 
-// Publisher holds one AMQP connection and channel.
-// On publish failure it attempts one reconnect before returning the error.
+// Publisher holds one AMQP connection and channel in confirm mode.
+// Every Publish call blocks until the broker sends Basic.Ack (or returns an
+// error), giving at-least-once delivery: the relay will not delete an outbox
+// row until the broker has confirmed it received the message.
 type Publisher struct {
-	url  string
-	mu   sync.Mutex
-	conn *amqp.Connection
-	ch   *amqp.Channel
+	url      string
+	mu       sync.Mutex
+	conn     *amqp.Connection
+	ch       *amqp.Channel
+	confirms chan amqp.Confirmation
 }
 
 func New(url string) (*Publisher, error) {
@@ -32,8 +35,7 @@ func New(url string) (*Publisher, error) {
 }
 
 func (p *Publisher) connect() error {
-	// Close the previous connection before replacing it. Ignore the error —
-	// it's already broken, but we still need to release OS-level resources.
+	// Release the previous connection (already broken, but free OS resources).
 	if p.conn != nil {
 		p.conn.Close()
 	}
@@ -51,12 +53,24 @@ func (p *Publisher) connect() error {
 		conn.Close()
 		return fmt.Errorf("declare exchange: %w", err)
 	}
+	// Enable publisher confirms. The broker will now ack every published
+	// message. Without this, Publish is fire-and-forget at the protocol level.
+	if err := ch.Confirm(false); err != nil {
+		conn.Close()
+		return fmt.Errorf("enable publisher confirms: %w", err)
+	}
 	p.conn = conn
 	p.ch = ch
+	// Buffer of 1: we hold mu for the full publish+confirm cycle so only one
+	// message is ever in-flight at a time.
+	p.confirms = ch.NotifyPublish(make(chan amqp.Confirmation, 1))
 	return nil
 }
 
-func (p *Publisher) Publish(_ context.Context, routingKey string, body []byte) error {
+// Publish sends one message and waits for the broker to confirm it.
+// Returns an error if the broker nacks, the connection drops, or ctx is
+// cancelled — in all cases the caller (relay) must not delete the outbox row.
+func (p *Publisher) Publish(ctx context.Context, routingKey string, body []byte) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -65,19 +79,33 @@ func (p *Publisher) Publish(_ context.Context, routingKey string, body []byte) e
 		DeliveryMode: amqp.Persistent,
 		Body:         body,
 	}
-	err := p.ch.Publish(exchange, routingKey, false, false, msg)
-	if err == nil {
-		return nil
+
+	if err := p.ch.PublishWithContext(ctx, exchange, routingKey, false, false, msg); err != nil {
+		// Channel is broken — reconnect and retry once.
+		// connect() replaces p.confirms with a fresh channel, so the
+		// confirm we wait for below belongs to this second publish, not
+		// the failed one.
+		if rerr := p.connect(); rerr != nil {
+			return fmt.Errorf("publish failed and reconnect failed: %w", rerr)
+		}
+		if err = p.ch.PublishWithContext(ctx, exchange, routingKey, false, false, msg); err != nil {
+			return fmt.Errorf("publish after reconnect: %w", err)
+		}
 	}
 
-	// One reconnect attempt on failure.
-	if rerr := p.connect(); rerr != nil {
-		return fmt.Errorf("publish failed and reconnect failed: %w", rerr)
+	// Wait for broker acknowledgement.
+	select {
+	case confirm, ok := <-p.confirms:
+		if !ok {
+			return fmt.Errorf("confirm channel closed (connection dropped)")
+		}
+		if !confirm.Ack {
+			return fmt.Errorf("broker nacked message (delivery tag %d)", confirm.DeliveryTag)
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	if err = p.ch.Publish(exchange, routingKey, false, false, msg); err != nil {
-		return fmt.Errorf("publish after reconnect: %w", err)
-	}
-	return nil
 }
 
 func (p *Publisher) Close() error {

@@ -12,17 +12,17 @@ import (
 )
 
 type Channel struct {
-	ID                  int64
-	TenantID            string
-	UserID              string
-	Type                string
-	Config              json.RawMessage
-	Enabled             bool
-	Status              string
-	ConsecutiveFailures int
-	LastFailedAt        *time.Time
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	ID                  int64           `json:"id"`
+	TenantID            string          `json:"tenant_id"`
+	UserID              string          `json:"user_id"`
+	Type                string          `json:"type"`
+	Config              json.RawMessage `json:"config"`
+	Enabled             bool            `json:"enabled"`
+	Status              string          `json:"status"`
+	ConsecutiveFailures int             `json:"consecutive_failures"`
+	LastFailedAt        *time.Time      `json:"last_failed_at,omitempty"`
+	CreatedAt           time.Time       `json:"created_at"`
+	UpdatedAt           time.Time       `json:"updated_at"`
 }
 
 type Repo struct{ pool *pgxpool.Pool }

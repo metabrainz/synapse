@@ -18,6 +18,7 @@ import (
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/channels"
+	"github.com/metabrainz/synapse/internal/store/eventtypes"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 	"github.com/metabrainz/synapse/internal/store/tenants"
 )
@@ -35,7 +36,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	pool, err := store.NewPool(ctx, cfg.Postgres)
+	pool, err := store.NewPool(ctx, cfg.Postgres, cfg.HTTP.DBConns)
 	if err != nil {
 		slog.Error("postgres", "err", err)
 		os.Exit(1)
@@ -52,8 +53,9 @@ func main() {
 	tenantRepo := tenants.New(pool)
 	channelRepo := channels.New(pool)
 	subRepo := subscriptions.New(pool)
+	etRepo := eventtypes.New(pool)
 
-	cache := fanout.NewCache(pool, subRepo)
+	cache := fanout.NewCache(pool, subRepo, cfg.Postgres.DirectDSN)
 	if err := cache.Start(ctx); err != nil {
 		slog.Error("fanout cache", "err", err)
 		os.Exit(1)
@@ -63,11 +65,17 @@ func main() {
 	deduper := dedup.New(rdb)
 
 	router := api.NewRouter(
-		api.Config{AdminKey: cfg.HTTP.AdminKey},
+		api.Config{
+			AdminKey: cfg.HTTP.AdminKey,
+			Health: api.HealthChecks{
+				Redis: func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
+			},
+		},
 		pool,
 		tenantRepo,
 		channelRepo,
 		subRepo,
+		etRepo,
 		fan,
 		deduper,
 	)

@@ -80,7 +80,7 @@ func Handler(
 		retryBody, _ := json.Marshal(msg)
 		ttl := backoffMs(nextAttempt)
 
-		if pubErr := consumer.PublishRetry(channelType, retryBody, ttl); pubErr != nil {
+		if pubErr := consumer.PublishRetry(ctx, channelType, retryBody, ttl); pubErr != nil {
 			// If we can't schedule the retry, Nack so the DLQ catches it.
 			slog.Error("worker: retry publish failed", "delivery_id", msg.DeliveryID, "err", pubErr)
 			return pubErr

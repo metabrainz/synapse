@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 )
@@ -24,16 +25,25 @@ type Cache struct {
 	exact    map[string][]subscriptions.ActiveChannel // "tenantID:userID:eventType" → channels
 	wildcard map[string][]subscriptions.ActiveChannel // "tenantID:userID" → wildcard channels
 
-	subs *subscriptions.Repo
-	pool *pgxpool.Pool
+	subs      *subscriptions.Repo
+	pool      *pgxpool.Pool
+	listenDSN string // direct Postgres DSN for LISTEN/NOTIFY, bypasses PgBouncer
 }
 
-func NewCache(pool *pgxpool.Pool, subs *subscriptions.Repo) *Cache {
+// NewCache creates a cache backed by pool for query traffic.
+// listenDSN must be a direct Postgres DSN (not PgBouncer) because LISTEN/NOTIFY
+// requires a persistent session that PgBouncer transaction mode doesn't support.
+// Pass an empty string to derive the DSN from pool's connection config (local dev).
+func NewCache(pool *pgxpool.Pool, subs *subscriptions.Repo, listenDSN string) *Cache {
+	if listenDSN == "" {
+		listenDSN = pool.Config().ConnConfig.ConnString()
+	}
 	return &Cache{
-		exact:    make(map[string][]subscriptions.ActiveChannel),
-		wildcard: make(map[string][]subscriptions.ActiveChannel),
-		subs:     subs,
-		pool:     pool,
+		exact:     make(map[string][]subscriptions.ActiveChannel),
+		wildcard:  make(map[string][]subscriptions.ActiveChannel),
+		subs:      subs,
+		pool:      pool,
+		listenDSN: listenDSN,
 	}
 }
 
@@ -88,16 +98,16 @@ func (c *Cache) rebuild(ctx context.Context) error {
 	return nil
 }
 
-// listen blocks, listening for PG NOTIFY on subscription_changes.
-// WaitForNotification is given a rebuildInterval timeout so the cache rebuilds
-// periodically even if no notification arrives — guards against missed notifies.
+// listen opens a dedicated raw connection to Postgres (bypassing PgBouncer) and
+// blocks on LISTEN subscription_changes. WaitForNotification is bounded by
+// rebuildInterval so the cache rebuilds periodically even if no NOTIFY arrives.
 func (c *Cache) listen(ctx context.Context) {
-	conn, err := c.pool.Acquire(ctx)
+	conn, err := pgx.Connect(ctx, c.listenDSN)
 	if err != nil {
-		slog.Error("cache listen: acquire conn", "err", err)
+		slog.Error("cache listen: connect", "err", err)
 		return
 	}
-	defer conn.Release()
+	defer conn.Close(ctx)
 
 	if _, err := conn.Exec(ctx, "LISTEN "+listenChannel); err != nil {
 		slog.Error("cache listen: LISTEN failed", "err", err)
@@ -111,16 +121,17 @@ func (c *Cache) listen(ctx context.Context) {
 
 		// Bound the wait so we rebuild periodically even without a notification.
 		waitCtx, cancel := context.WithTimeout(ctx, rebuildInterval)
-		_, err := conn.Conn().WaitForNotification(waitCtx)
+		_, err := conn.WaitForNotification(waitCtx)
 		cancel()
 
 		if ctx.Err() != nil {
 			return
 		}
-		// err is nil (notification) or a deadline exceeded (timeout) — both
-		// mean we should rebuild. A real connection error is logged and we exit.
-		if err != nil && ctx.Err() == nil {
-			slog.Error("cache listen: wait error", "err", err)
+		// waitCtx.Err() is non-nil when our own deadline fired (expected periodic tick).
+		// If err is non-nil and waitCtx is still healthy, it's a real connection problem.
+		if err != nil && waitCtx.Err() == nil {
+			slog.Error("cache listen: connection error", "err", err)
+			return
 		}
 		if err := c.rebuild(ctx); err != nil {
 			slog.Error("cache rebuild", "err", err)

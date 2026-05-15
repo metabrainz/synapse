@@ -77,8 +77,11 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.HTTP.Port != 8080 {
 		t.Errorf("expected default port 8080, got %d", cfg.HTTP.Port)
 	}
-	if cfg.Postgres.MaxConns != 20 {
-		t.Errorf("expected default max_conns 20, got %d", cfg.Postgres.MaxConns)
+	if cfg.HTTP.DBConns != 20 {
+		t.Errorf("expected default api db_conns 20, got %d", cfg.HTTP.DBConns)
+	}
+	if cfg.Ingest.Workers != 4 {
+		t.Errorf("expected default ingest workers 4, got %d", cfg.Ingest.Workers)
 	}
 	if cfg.Relay.OutboxPollMs != 100 {
 		t.Errorf("expected default outbox_poll_ms 100, got %d", cfg.Relay.OutboxPollMs)

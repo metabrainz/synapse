@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metabrainz/synapse/internal/api/middleware"
+	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/channels"
 )
 
@@ -39,6 +40,10 @@ func (h *channelsHandler) create(w http.ResponseWriter, r *http.Request) {
 		Config:   body.Config,
 	})
 	if err != nil {
+		if store.IsUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "channel of this type already exists for user")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to create channel")
 		return
 	}

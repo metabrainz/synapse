@@ -8,11 +8,12 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/metabrainz/synapse/internal/broker"
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
 	"github.com/metabrainz/synapse/internal/config"
-	"github.com/metabrainz/synapse/internal/relay"
+	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/ingest"
 	"github.com/metabrainz/synapse/internal/store"
+	"github.com/metabrainz/synapse/internal/store/subscriptions"
 )
 
 func main() {
@@ -28,7 +29,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	pool, err := store.NewPool(ctx, cfg.Postgres, int32(cfg.Relay.Workers))
+	pool, err := store.NewPool(ctx, cfg.Postgres, int32(cfg.Ingest.Workers))
 	if err != nil {
 		slog.Error("postgres", "err", err)
 		os.Exit(1)
@@ -40,15 +41,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	amqpURL := cfg.RabbitMQ.URL
-	newPub := func() (broker.Publisher, error) { return rabbitmq.New(amqpURL) }
-
-	slog.Info("relay: starting", "workers", cfg.Relay.Workers, "poll_ms", cfg.Relay.OutboxPollMs)
-
-	if err := relay.Run(ctx, pool, newPub, cfg.Relay.Workers, cfg.Relay.OutboxPollMs); err != nil && ctx.Err() == nil {
-		slog.Error("relay", "err", err)
+	subRepo := subscriptions.New(pool)
+	cache := fanout.NewCache(pool, subRepo, cfg.Postgres.DirectDSN)
+	if err := cache.Start(ctx); err != nil {
+		slog.Error("fanout cache", "err", err)
 		os.Exit(1)
 	}
 
-	slog.Info("relay: stopped")
+	fan := fanout.New(cache)
+	consumer := ingest.NewConsumer(pool, fan)
+
+	slog.Info("ingest: starting", "workers", cfg.Ingest.Workers)
+
+	if err := consumer.Run(ctx, cfg.RabbitMQ.URL, cfg.Ingest.Workers); err != nil && ctx.Err() == nil {
+		slog.Error("ingest", "err", err)
+		os.Exit(1)
+	}
+
+	slog.Info("ingest: stopped")
 }
