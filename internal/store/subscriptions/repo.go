@@ -135,4 +135,3 @@ func (r *Repo) ListAllForCache(ctx context.Context) ([]CacheEntry, error) {
 	}
 	return out, rows.Err()
 }
-

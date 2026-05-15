@@ -116,4 +116,3 @@ func applyEnv(cfg *Config) error {
 		integer(&cfg.Ingest.Workers, "SYNAPSE_INGEST_WORKERS"),
 	)
 }
-

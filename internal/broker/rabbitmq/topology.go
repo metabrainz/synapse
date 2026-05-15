@@ -10,8 +10,8 @@ import (
 var ChannelTypes = []string{"webhook", "email"}
 
 const (
-	ExchangeIngest = "events.ingest"
-	QueueIngest    = "events.ingest"
+	ExchangeIngest   = "events.ingest"
+	QueueIngest      = "events.ingest"
 	RoutingKeyIngest = "event"
 )
 
