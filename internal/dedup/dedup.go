@@ -19,10 +19,12 @@ func New(rdb *redis.Client) *Deduper {
 	return &Deduper{rdb: rdb, ttl: defaultTTL}
 }
 
-// Seen returns true if deliveryID has been seen before (worker-level dedup).
+// Seen returns true if (deliveryID, attempt) has been seen before (worker-level dedup).
+// Keying by attempt ensures legitimate retries are not mistaken for AMQP redeliveries:
+// same delivery_id + same attempt = redelivery (skip); same delivery_id + new attempt = retry (process).
 // Fail-open on Redis error — the PG UNIQUE constraint is the hard backstop.
-func (d *Deduper) Seen(ctx context.Context, deliveryID int64) (bool, error) {
-	key := fmt.Sprintf("synapse:dedup:%d", deliveryID)
+func (d *Deduper) Seen(ctx context.Context, deliveryID int64, attempt int) (bool, error) {
+	key := fmt.Sprintf("synapse:dedup:%d:%d", deliveryID, attempt)
 	ok, err := d.rdb.SetNX(ctx, key, 1, d.ttl).Result()
 	if err != nil {
 		return false, nil // fail-open

@@ -46,7 +46,7 @@ func Handler(
 		}
 
 		// Guard against at-least-once redelivery producing duplicate calls.
-		seen, _ := deduper.Seen(ctx, msg.DeliveryID)
+		seen, _ := deduper.Seen(ctx, msg.DeliveryID, msg.Attempt)
 		if seen {
 			slog.Info("worker: skipping duplicate", "delivery_id", msg.DeliveryID)
 			return nil

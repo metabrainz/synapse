@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -31,7 +32,10 @@ type Adapter struct {
 }
 
 func New() *Adapter {
-	return &Adapter{client: &http.Client{Timeout: 10 * time.Second}}
+	return &Adapter{client: &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{MaxIdleConnsPerHost: 100},
+	}}
 }
 
 func (a *Adapter) Deliver(ctx context.Context, msg fanout.WorkerMessage) error {
@@ -66,6 +70,9 @@ func (a *Adapter) Deliver(ctx context.Context, msg fanout.WorkerMessage) error {
 		return err
 	}
 	defer resp.Body.Close()
+
+	// Drain body so the connection can be reused by the pool.
+	io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("webhook returned HTTP %d", resp.StatusCode)
