@@ -6,26 +6,44 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/metabrainz/synapse/internal/broker"
-	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/outbox"
 )
 
-const batchSize = 100
+const (
+	batchSize      = 100
+	stuckAfter     = 5 * time.Minute
+	publishTimeout = 5 * time.Second
+)
 
 type Relay struct {
-	pool   *pgxpool.Pool
-	pub    broker.Publisher
-	pollMs int
+	pool     *pgxpool.Pool
+	pub      broker.Publisher
+	pollMs   int
+	workerID string
 }
 
 func New(pool *pgxpool.Pool, pub broker.Publisher, pollMs int) *Relay {
-	return &Relay{pool: pool, pub: pub, pollMs: pollMs}
+	return &Relay{
+		pool:     pool,
+		pub:      pub,
+		pollMs:   pollMs,
+		workerID: uuid.NewString(),
+	}
 }
 
 // Run polls the outbox on every tick until ctx is cancelled.
+// On startup it resets any rows this process left stuck from a prior crash.
 func (r *Relay) Run(ctx context.Context) error {
+	if n, err := outbox.ResetStuck(ctx, r.pool, stuckAfter); err != nil {
+		slog.Warn("relay: reset stuck rows", "err", err)
+	} else if n > 0 {
+		slog.Info("relay: reset stuck rows", "count", n)
+	}
+
 	interval := time.Duration(r.pollMs) * time.Millisecond
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -36,43 +54,49 @@ func (r *Relay) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			if err := r.tick(ctx); err != nil {
-				slog.Error("relay tick", "err", err)
+				slog.Error("relay tick", "worker", r.workerID, "err", err)
 			}
 		}
 	}
 }
 
-// tick fetches a batch inside a transaction so FOR UPDATE SKIP LOCKED holds
-// through publish+delete. Other relay goroutines skip locked rows and claim
-// their own disjoint batch — no double-publishing without relying solely on dedup.
+// tick implements the three-phase outbox relay:
+//
+//  1. Claim   — mark batch PUBLISHING, release connection.
+//  2. Publish — no DB connection held: AMQP publish + confirm per row.
+//  3. Cleanup — delete confirmed rows, release connection.
+//
+// If the relay crashes between phases 2 and 3, rows remain PUBLISHING until
+// ResetStuck resets them to PENDING (called on startup or by the cleanup worker).
 func (r *Relay) tick(ctx context.Context) error {
-	return store.WithTx(ctx, r.pool, func(q store.Querier) error {
-		msgs, err := outbox.FetchPending(ctx, q, batchSize)
-		if err != nil {
-			return fmt.Errorf("fetch pending: %w", err)
-		}
-		if len(msgs) == 0 {
-			return nil
-		}
-
-		var published []int64
-		for _, m := range msgs {
-			if err := r.pub.Publish(ctx, m.RoutingKey, m.Payload); err != nil {
-				slog.Error("relay publish", "outbox_id", m.ID, "routing_key", m.RoutingKey, "err", err)
-				break
-			}
-			published = append(published, m.ID)
-		}
-
-		if len(published) == 0 {
-			return nil
-		}
-
-		if err := outbox.DeleteBatch(ctx, q, published); err != nil {
-			return fmt.Errorf("delete outbox batch: %w", err)
-		}
-
-		slog.Info("relay tick", "published", len(published), "remaining", len(msgs)-len(published))
+	// Phase 1 — claim
+	msgs, err := outbox.ClaimBatch(ctx, r.pool, r.workerID, batchSize)
+	if err != nil {
+		return fmt.Errorf("claim batch: %w", err)
+	}
+	if len(msgs) == 0 {
 		return nil
-	})
+	}
+
+	// Phase 2 — publish (no DB connection held)
+	batch := make([]broker.BatchMsg, len(msgs))
+	for i, m := range msgs {
+		batch[i] = broker.BatchMsg{ID: m.ID, RoutingKey: m.RoutingKey, Body: m.Payload}
+	}
+	pubCtx, cancel := context.WithTimeout(ctx, publishTimeout)
+	confirmed, err := r.pub.PublishBatch(pubCtx, batch)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("publish batch: %w", err)
+	}
+	if len(confirmed) == 0 {
+		return nil
+	}
+
+	// Phase 3 — delete confirmed rows
+	if err := outbox.DeleteClaimed(ctx, r.pool, confirmed, r.workerID); err != nil {
+		return fmt.Errorf("delete claimed: %w", err)
+	}
+
+	return nil
 }

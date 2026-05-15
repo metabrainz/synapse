@@ -1,0 +1,10 @@
+BEGIN;
+
+DROP INDEX IF EXISTS idx_outbox_poll;
+
+ALTER TABLE outbox
+    DROP COLUMN IF EXISTS locked_at,
+    DROP COLUMN IF EXISTS locked_by,
+    DROP COLUMN IF EXISTS status;
+
+COMMIT;

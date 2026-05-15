@@ -12,6 +12,7 @@ import (
 	"github.com/metabrainz/synapse/internal/cleanup"
 	"github.com/metabrainz/synapse/internal/config"
 	"github.com/metabrainz/synapse/internal/store"
+	"github.com/metabrainz/synapse/internal/store/outbox"
 )
 
 func main() {
@@ -42,6 +43,11 @@ func main() {
 		}
 		if err := cleanup.PruneOldEvents(ctx, pool, *eventAge); err != nil {
 			slog.Error("cleanup: prune", "err", err)
+		}
+		if n, err := outbox.ResetStuck(ctx, pool, 5*time.Minute); err != nil {
+			slog.Error("cleanup: reset stuck outbox rows", "err", err)
+		} else if n > 0 {
+			slog.Warn("cleanup: reset stuck outbox rows", "count", n)
 		}
 	}
 

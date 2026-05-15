@@ -6,12 +6,18 @@ import (
 	"sync"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+
+	"github.com/metabrainz/synapse/internal/broker"
 )
 
 const (
 	exchange      = "deliveries"
 	exchangeRetry = "deliveries.retry"
 	exchangeDead  = "deliveries.dead"
+
+	// confirmBufSize must exceed the largest batch size to prevent the broker's
+	// internal goroutine from blocking while we're still in Phase A publishing.
+	confirmBufSize = 512
 )
 
 // Publisher holds one AMQP connection and channel in confirm mode.
@@ -61,9 +67,7 @@ func (p *Publisher) connect() error {
 	}
 	p.conn = conn
 	p.ch = ch
-	// Buffer of 1: we hold mu for the full publish+confirm cycle so only one
-	// message is ever in-flight at a time.
-	p.confirms = ch.NotifyPublish(make(chan amqp.Confirmation, 1))
+	p.confirms = ch.NotifyPublish(make(chan amqp.Confirmation, confirmBufSize))
 	return nil
 }
 
@@ -106,6 +110,84 @@ func (p *Publisher) Publish(ctx context.Context, routingKey string, body []byte)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// PublishBatch publishes all messages first, then drains publisher confirms
+// in a second phase to avoid a confirm RTT per message.
+//
+// Semantics:
+//   - Only ACKed message IDs are returned.
+//   - NACKed or unknown messages remain retryable in the outbox.
+//   - Caller must delete ONLY the returned IDs.
+//   - Caller must recover stuck PUBLISHING rows separately.
+//
+// Important:
+//   - NotifyPublish emits one Confirmation per published message.
+//   - Delivery tags are monotonically increasing per channel.
+func (p *Publisher) PublishBatch(ctx context.Context, msgs []broker.BatchMsg) ([]int64, error) {
+	if len(msgs) == 0 {
+		return nil, nil
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	startTag := p.ch.GetNextPublishSeqNo()
+
+	// Phase A — publish everything without waiting for confirms.
+	for _, m := range msgs {
+		pub := amqp.Publishing{
+			ContentType:  "application/json",
+			DeliveryMode: amqp.Persistent,
+			Body:         m.Body,
+		}
+		if err := p.ch.PublishWithContext(ctx, exchange, m.RoutingKey, false, false, pub); err != nil {
+			// Publish failure does NOT guarantee broker absence.
+			// Message may already have been received before connection loss.
+			//
+			// We reconnect and return error so caller retries only
+			// non-confirmed rows later.
+			if rerr := p.connect(); rerr != nil {
+				return nil, fmt.Errorf("publish failed and reconnect failed: %w", rerr)
+			}
+			return nil, fmt.Errorf("publish failed, batch aborted: %w", err)
+		}
+	}
+
+	// Phase B — drain confirms.
+	n := len(msgs)
+	received := make([]bool, n)
+	acked := make([]bool, n)
+	receivedCount := 0
+
+	for receivedCount < n {
+		select {
+		case c, ok := <-p.confirms:
+			if !ok {
+				return nil, fmt.Errorf("confirm channel closed")
+			}
+			idx := int(c.DeliveryTag - startTag)
+			if idx < 0 || idx >= n {
+				continue
+			}
+			if received[idx] {
+				continue
+			}
+			received[idx] = true
+			acked[idx] = c.Ack
+			receivedCount++
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	confirmedIDs := make([]int64, 0, n)
+	for i, m := range msgs {
+		if acked[i] {
+			confirmedIDs = append(confirmedIDs, m.ID)
+		}
+	}
+	return confirmedIDs, nil
 }
 
 func (p *Publisher) Close() error {
