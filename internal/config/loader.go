@@ -55,9 +55,12 @@ func defaultConfig() Config {
 		Worker: WorkerConfig{
 			WebhookConcurrency: 10,
 			EmailConcurrency:   5,
+			DBPool:             15,
 		},
 		Ingest: IngestConfig{
-			Workers: 4,
+			Workers:   4,
+			BatchSize: 50,
+			DrainMs:   10,
 		},
 	}
 }
@@ -113,6 +116,9 @@ func applyEnv(cfg *Config) error {
 		integer(&cfg.Relay.Workers, "SYNAPSE_RELAY_WORKERS"),
 		integer(&cfg.Relay.OutboxPollMs, "SYNAPSE_RELAY_POLL_MS"),
 		integer(&cfg.Worker.WebhookConcurrency, "SYNAPSE_WORKER_WEBHOOK_CONCURRENCY"),
+		integer(&cfg.Worker.DBPool, "SYNAPSE_WORKER_DB_POOL"),
 		integer(&cfg.Ingest.Workers, "SYNAPSE_INGEST_WORKERS"),
+		integer(&cfg.Ingest.BatchSize, "SYNAPSE_INGEST_BATCH_SIZE"),
+		integer(&cfg.Ingest.DrainMs, "SYNAPSE_INGEST_DRAIN_MS"),
 	)
 }

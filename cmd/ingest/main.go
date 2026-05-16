@@ -51,9 +51,9 @@ func main() {
 	fan := fanout.New(cache)
 	consumer := ingest.NewConsumer(pool, fan)
 
-	slog.Info("ingest: starting", "workers", cfg.Ingest.Workers)
+	slog.Info("ingest: starting", "workers", cfg.Ingest.Workers, "batch_size", cfg.Ingest.BatchSize, "drain_ms", cfg.Ingest.DrainMs)
 
-	if err := consumer.Run(ctx, cfg.RabbitMQ.URL, cfg.Ingest.Workers); err != nil && ctx.Err() == nil {
+	if err := consumer.Run(ctx, cfg.RabbitMQ.URL, cfg.Ingest.Workers, cfg.Ingest.BatchSize, cfg.Ingest.DrainMs); err != nil && ctx.Err() == nil {
 		slog.Error("ingest", "err", err)
 		os.Exit(1)
 	}

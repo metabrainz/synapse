@@ -33,7 +33,7 @@ type Adapter struct {
 
 func New() *Adapter {
 	return &Adapter{client: &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout:   10 * time.Second,
 		Transport: &http.Transport{MaxIdleConnsPerHost: 100},
 	}}
 }

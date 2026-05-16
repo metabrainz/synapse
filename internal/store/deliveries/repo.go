@@ -40,6 +40,44 @@ func Insert(ctx context.Context, q store.Querier, d Delivery) (int64, error) {
 	return id, err
 }
 
+// InsertBatch inserts all deliveries in one round-trip and returns their IDs
+// in the same order as the input slice. Uses unnest to avoid N individual inserts.
+func InsertBatch(ctx context.Context, q store.Querier, ds []Delivery) ([]int64, error) {
+	n := len(ds)
+	eventIDs := make([]int64, n)
+	channelIDs := make([]int64, n)
+	channelTypes := make([]string, n)
+	maxAttempts := make([]int32, n)
+
+	for i, d := range ds {
+		eventIDs[i] = d.EventID
+		channelIDs[i] = d.ChannelID
+		channelTypes[i] = d.ChannelType
+		maxAttempts[i] = int32(d.MaxAttempts)
+	}
+
+	rows, err := q.Query(ctx,
+		`INSERT INTO deliveries (event_id, channel_id, channel_type, max_attempts)
+		 SELECT unnest($1::bigint[]), unnest($2::bigint[]), unnest($3::text[]), unnest($4::int[])
+		 RETURNING id`,
+		eventIDs, channelIDs, channelTypes, maxAttempts,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ids := make([]int64, 0, n)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func UpdateStatus(ctx context.Context, q store.Querier, id int64, status string, attempt int, lastErr *string) error {
 	_, err := q.Exec(ctx,
 		`UPDATE deliveries

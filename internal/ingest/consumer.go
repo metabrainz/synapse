@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
@@ -33,61 +34,83 @@ func NewConsumer(pool *pgxpool.Pool, fan *fanout.Fanout) *Consumer {
 	return &Consumer{pool: pool, fan: fan}
 }
 
-// Run starts workers goroutines, each with its own AMQP connection and channel.
-// Each goroutine processes one message at a time; workers controls DB concurrency.
-func (c *Consumer) Run(ctx context.Context, amqpURL string, workers int) error {
+// Run starts workers goroutines, each collecting up to batchSize messages per
+// transaction. Increasing batchSize amortises the fixed per-transaction overhead
+// (BEGIN + events.InsertBatch + deliveries.InsertBatch + outbox.InsertBatch + COMMIT)
+// across more events, so throughput scales with batchSize rather than worker count.
+// drainMs controls how long each worker waits to accumulate a batch after the
+// first message arrives — higher values increase batch fill at high throughput.
+func (c *Consumer) Run(ctx context.Context, amqpURL string, workers, batchSize, drainMs int) error {
 	g, gctx := errgroup.WithContext(ctx)
 	for range workers {
 		g.Go(func() error {
-			return rabbitmq.ConsumeQueue(gctx, amqpURL, rabbitmq.QueueIngest, 1, c.handle)
+			return rabbitmq.ConsumeBatchQueue(
+				gctx, amqpURL, rabbitmq.QueueIngest,
+				batchSize, drainMs,
+				c.handleBatch,
+			)
 		})
 	}
 	return g.Wait()
 }
 
-func (c *Consumer) handle(ctx context.Context, body []byte) error {
-	var msg Message
-	if err := json.Unmarshal(body, &msg); err != nil {
-		return fmt.Errorf("invalid ingest message: %w", err)
-	}
-	if msg.TenantID == "" || msg.UserID == "" || msg.EventType == "" {
-		return fmt.Errorf("missing required fields (tenant_id, user_id, event_type)")
-	}
-	if msg.Payload == nil {
-		msg.Payload = json.RawMessage(`{}`)
-	}
-
-	var eventID int64
-	var deliveryCount int
-	err := store.WithTx(ctx, c.pool, func(q store.Querier) error {
-		ev := events.Event{
+// handleBatch parses all bodies, drops malformed ones, then writes the valid
+// set in a single transaction: one events.InsertBatch + one fanout.FanBatch.
+func (c *Consumer) handleBatch(ctx context.Context, bodies [][]byte) error {
+	now := time.Now()
+	evs := make([]events.Event, 0, len(bodies))
+	for _, body := range bodies {
+		var msg Message
+		if err := json.Unmarshal(body, &msg); err != nil {
+			slog.Error("ingest: malformed message, dropping", "err", err)
+			continue
+		}
+		if msg.TenantID == "" || msg.UserID == "" || msg.EventType == "" {
+			slog.Error("ingest: missing required fields, dropping")
+			continue
+		}
+		if msg.Payload == nil {
+			msg.Payload = json.RawMessage(`{}`)
+		}
+		evs = append(evs, events.Event{
 			TenantID:       msg.TenantID,
 			UserID:         msg.UserID,
 			EventType:      msg.EventType,
 			Payload:        msg.Payload,
 			IdempotencyKey: msg.IdempotencyKey,
-		}
-		id, err := events.Insert(ctx, q, ev)
+			CreatedAt:      now,
+		})
+	}
+	if len(evs) == 0 {
+		return nil
+	}
+
+	var deliveryCount int
+	err := store.WithTx(ctx, c.pool, func(q store.Querier) error {
+		ids, err := events.InsertBatch(ctx, q, evs)
 		if err != nil {
-			return err
+			return fmt.Errorf("insert events: %w", err)
 		}
-		eventID = id
-		ev.ID = id
-		count, err := c.fan.Fan(ctx, q, ev)
+		for i := range evs {
+			evs[i].ID = ids[i]
+		}
+		count, err := c.fan.FanBatch(ctx, q, evs)
 		if err != nil {
-			return err
+			return fmt.Errorf("fanout: %w", err)
 		}
 		deliveryCount = count
 		return nil
 	})
 	if err != nil {
 		if store.IsUniqueViolation(err) {
-			slog.Info("ingest: deduplicated", "tenant", msg.TenantID, "key", msg.IdempotencyKey)
-			return nil
+			// Batch contains a duplicate idempotency key; nack so RabbitMQ
+			// redelivers — the relay's dedup check will filter the true duplicate.
+			slog.Warn("ingest: batch has duplicate idempotency key, will redeliver", "size", len(evs))
+			return err
 		}
 		return err
 	}
 
-	slog.Info("ingest: processed", "tenant", msg.TenantID, "event_id", eventID, "deliveries", deliveryCount)
+	slog.Info("ingest: batch processed", "events", len(evs), "deliveries", deliveryCount)
 	return nil
 }

@@ -58,6 +58,7 @@ type HTTPConfig struct {
 type WorkerConfig struct {
 	WebhookConcurrency int `yaml:"webhook_concurrency"`
 	EmailConcurrency   int `yaml:"email_concurrency"`
+	DBPool             int `yaml:"db_pool"`
 }
 
 type RelayConfig struct {
@@ -66,5 +67,7 @@ type RelayConfig struct {
 }
 
 type IngestConfig struct {
-	Workers int `yaml:"workers"`
+	Workers   int `yaml:"workers"`
+	BatchSize int `yaml:"batch_size"`
+	DrainMs   int `yaml:"drain_ms"`
 }

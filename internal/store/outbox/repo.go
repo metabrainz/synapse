@@ -26,6 +26,20 @@ func Insert(ctx context.Context, q store.Querier, routingKey string, payload jso
 	return err
 }
 
+// InsertBatch writes all outbox rows in one round-trip using unnest.
+func InsertBatch(ctx context.Context, q store.Querier, routingKeys []string, payloads []json.RawMessage) error {
+	strs := make([]string, len(payloads))
+	for i, p := range payloads {
+		strs[i] = string(p)
+	}
+	_, err := q.Exec(ctx,
+		`INSERT INTO outbox (routing_key, payload)
+		 SELECT unnest($1::text[]), unnest($2::text[])::jsonb`,
+		routingKeys, strs,
+	)
+	return err
+}
+
 // ClaimBatch atomically marks up to limit PENDING rows as PUBLISHING and returns
 // them. The CTE avoids a separate SELECT + UPDATE round-trip and ensures only
 // this worker holds those rows — others skip them via SKIP LOCKED.
@@ -67,6 +81,40 @@ func DeleteClaimed(ctx context.Context, pool *pgxpool.Pool, ids []int64, workerI
 		`DELETE FROM outbox WHERE id = ANY($1) AND locked_by = $2`,
 		ids, workerID,
 	)
+	return err
+}
+
+// FetchPending returns up to limit PENDING rows ordered by created_at without
+// locking them. Safe to call inside or outside a transaction. Use for test
+// assertions and health checks; use ClaimBatch for the production relay.
+func FetchPending(ctx context.Context, q store.Querier, limit int) ([]Message, error) {
+	rows, err := q.Query(ctx,
+		`SELECT id, routing_key, payload, created_at FROM outbox
+		 WHERE status = 'PENDING'
+		 ORDER BY created_at ASC
+		 LIMIT $1`,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Message
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(&m.ID, &m.RoutingKey, &m.Payload, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// DeleteBatch removes outbox rows by ID without checking the locked_by owner.
+// Use for test cleanup; use DeleteClaimed for the production relay.
+func DeleteBatch(ctx context.Context, q store.Querier, ids []int64) error {
+	_, err := q.Exec(ctx, `DELETE FROM outbox WHERE id = ANY($1)`, ids)
 	return err
 }
 

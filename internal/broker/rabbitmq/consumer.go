@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -99,6 +100,93 @@ func (c *Consumer) Close() error {
 		return c.conn.Close()
 	}
 	return nil
+}
+
+// BatchHandler processes a batch of raw message bodies. Return nil to ack all
+// messages in the batch; return an error to nack all (RabbitMQ will redeliver).
+type BatchHandler func(ctx context.Context, bodies [][]byte) error
+
+// ConsumeBatchQueue collects up to batchSize messages per iteration and
+// processes them together via handler. It blocks waiting for the first message,
+// then drains additional messages for up to drainMs milliseconds before
+// processing — keeping latency low on a quiet queue while maximising batch
+// size under load. Returns when ctx is cancelled or the connection drops.
+func ConsumeBatchQueue(ctx context.Context, url, queue string, batchSize, drainMs int, handler BatchHandler) error {
+	conn, err := amqp.Dial(url)
+	if err != nil {
+		return fmt.Errorf("amqp dial: %w", err)
+	}
+	defer conn.Close()
+
+	ch, err := conn.Channel()
+	if err != nil {
+		return fmt.Errorf("amqp channel: %w", err)
+	}
+	defer ch.Close()
+
+	if err := ch.Qos(batchSize, 0, false); err != nil {
+		return fmt.Errorf("set qos: %w", err)
+	}
+
+	msgs, err := ch.Consume(queue, "", false, false, false, false, nil)
+	if err != nil {
+		return fmt.Errorf("consume %s: %w", queue, err)
+	}
+
+	drain := time.Duration(drainMs) * time.Millisecond
+
+	for {
+		// Block until the first message arrives or ctx is cancelled.
+		var first amqp.Delivery
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case msg, ok := <-msgs:
+			if !ok {
+				return fmt.Errorf("amqp channel closed")
+			}
+			first = msg
+		}
+
+		batch := []amqp.Delivery{first}
+		timer := time.NewTimer(drain)
+
+	collect:
+		for len(batch) < batchSize {
+			select {
+			case msg, ok := <-msgs:
+				if !ok {
+					timer.Stop()
+					break collect
+				}
+				batch = append(batch, msg)
+			case <-timer.C:
+				break collect
+			case <-ctx.Done():
+				timer.Stop()
+				for _, m := range batch {
+					m.Nack(false, true)
+				}
+				return ctx.Err()
+			}
+		}
+		timer.Stop()
+
+		bodies := make([][]byte, len(batch))
+		for i, m := range batch {
+			bodies[i] = m.Body
+		}
+
+		if err := handler(ctx, bodies); err != nil {
+			for _, m := range batch {
+				m.Nack(false, true)
+			}
+		} else {
+			for _, m := range batch {
+				m.Ack(false)
+			}
+		}
+	}
 }
 
 // ConsumeQueue is a simple blocking consume loop for an arbitrary named queue.
