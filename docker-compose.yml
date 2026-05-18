@@ -11,7 +11,7 @@ services:
       test: ["CMD-SHELL", "pg_isready -U synapse"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   redis:
     image: redis:7
@@ -35,4 +35,103 @@ services:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+  migrate:
+    build: .
+    entrypoint: ["/bin/migrate"]
+    command: ["up"]
+    environment:
+      SYNAPSE_PG_HOST: postgres
+      SYNAPSE_PG_USER: synapse
+      SYNAPSE_PG_PASSWORD: synapse
+      SYNAPSE_PG_DBNAME: synapse
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    entrypoint: ["/bin/api"]
+    environment:
+      SYNAPSE_HTTP_PORT: "8080"
+      SYNAPSE_ADMIN_KEY: local-dev-key
+      SYNAPSE_PG_HOST: postgres
+      SYNAPSE_PG_USER: synapse
+      SYNAPSE_PG_PASSWORD: synapse
+      SYNAPSE_PG_DBNAME: synapse
+      SYNAPSE_REDIS_ADDR: redis:6379
+      SYNAPSE_RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    ports:
+      - "8080:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  relay:
+    build: .
+    entrypoint: ["/bin/relay"]
+    environment:
+      SYNAPSE_PG_HOST: postgres
+      SYNAPSE_PG_USER: synapse
+      SYNAPSE_PG_PASSWORD: synapse
+      SYNAPSE_PG_DBNAME: synapse
+      SYNAPSE_RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+
+  ingest:
+    build: .
+    entrypoint: ["/bin/ingest"]
+    environment:
+      SYNAPSE_PG_HOST: postgres
+      SYNAPSE_PG_USER: synapse
+      SYNAPSE_PG_PASSWORD: synapse
+      SYNAPSE_PG_DBNAME: synapse
+      SYNAPSE_RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+
+  worker:
+    build: .
+    entrypoint: ["/bin/worker"]
+    environment:
+      SYNAPSE_PG_HOST: postgres
+      SYNAPSE_PG_USER: synapse
+      SYNAPSE_PG_PASSWORD: synapse
+      SYNAPSE_PG_DBNAME: synapse
+      SYNAPSE_REDIS_ADDR: redis:6379
+      SYNAPSE_RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      SYNAPSE_WORKER_WEBHOOK_CONCURRENCY: "10"
+      SYNAPSE_WORKER_WEBHOOK_PREFETCH: "10"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  cleanup:
+    build: .
+    entrypoint: ["/bin/cleanup"]
+    command: ["-interval", "1h", "-event-age", "720h"]
+    environment:
+      SYNAPSE_PG_HOST: postgres
+      SYNAPSE_PG_USER: synapse
+      SYNAPSE_PG_PASSWORD: synapse
+      SYNAPSE_PG_DBNAME: synapse
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
