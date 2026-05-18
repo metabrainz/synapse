@@ -42,6 +42,12 @@ func (c *authCache) get(key string) (*tenants.Tenant, bool) {
 	return e.tenant, true
 }
 
+func (c *authCache) delete(key string) {
+	c.mu.Lock()
+	delete(c.m, key)
+	c.mu.Unlock()
+}
+
 func (c *authCache) set(key string, t *tenants.Tenant) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -54,12 +60,21 @@ func (c *authCache) set(key string, t *tenants.Tenant) {
 	c.m[key] = authEntry{tenant: t, expiresAt: now.Add(c.ttl)}
 }
 
-// Authenticate validates the Bearer API key and puts the tenant in the request context.
-// Results are cached for 30 s so auth lookups don't compete with ingest transactions
-// for DB pool connections under heavy load.
-func Authenticate(repo *tenants.Repo) func(http.Handler) http.Handler {
+// NewAuth returns an auth middleware and an eviction function. The eviction
+// function removes a specific API key from the in-memory cache so that key
+// rotation takes effect immediately rather than after the cache TTL.
+func NewAuth(repo *tenants.Repo) (mw func(http.Handler) http.Handler, evict func(apiKey string)) {
 	cache := newAuthCache(30 * time.Second)
+	return authenticate(repo, cache), cache.delete
+}
 
+// Authenticate is a convenience wrapper when cache eviction is not needed.
+func Authenticate(repo *tenants.Repo) func(http.Handler) http.Handler {
+	mw, _ := NewAuth(repo)
+	return mw
+}
+
+func authenticate(repo *tenants.Repo, cache *authCache) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")

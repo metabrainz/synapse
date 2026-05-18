@@ -66,7 +66,8 @@ func NewRouter(
 	})
 
 	// Admin routes
-	admin := &adminHandler{repo: tenantRepo}
+	authMW, evictKey := middleware.NewAuth(tenantRepo)
+	admin := &adminHandler{repo: tenantRepo, evictKey: evictKey}
 
 	// Event types routes
 	et := &eventTypesHandler{repo: etRepo}
@@ -81,7 +82,7 @@ func NewRouter(
 	})
 
 	// Tenant-authenticated routes
-	r.With(middleware.Authenticate(tenantRepo)).Route("/v1", func(r chi.Router) {
+	r.With(authMW).Route("/v1", func(r chi.Router) {
 		if cfg.Limiter != nil {
 			r.Use(cfg.Limiter.Middleware(func(r *http.Request) string {
 				if t := middleware.TenantFromContext(r.Context()); t != nil {

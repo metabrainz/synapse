@@ -61,18 +61,18 @@ func (r *Repo) List(ctx context.Context) ([]Tenant, error) {
 	return out, rows.Err()
 }
 
-func (r *Repo) RotateAPIKey(ctx context.Context, id, newKey string) error {
-	tag, err := r.pool.Exec(ctx,
-		`UPDATE tenants SET api_key = $1 WHERE id = $2`,
-		newKey, id,
-	)
-	if err != nil {
-		return err
+// RotateAPIKey replaces the API key for the given tenant and returns the
+// previous key so the caller can evict it from any in-memory auth caches.
+func (r *Repo) RotateAPIKey(ctx context.Context, id, newKey string) (oldKey string, err error) {
+	err = r.pool.QueryRow(ctx, `
+		WITH prev AS (SELECT api_key FROM tenants WHERE id = $2)
+		UPDATE tenants SET api_key = $1 WHERE id = $2
+		RETURNING (SELECT api_key FROM prev)
+	`, newKey, id).Scan(&oldKey)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return oldKey, err
 }
 
 type scanner interface{ Scan(dest ...any) error }

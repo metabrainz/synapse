@@ -12,7 +12,8 @@ import (
 )
 
 type adminHandler struct {
-	repo *tenants.Repo
+	repo     *tenants.Repo
+	evictKey func(string) // removes an API key from the auth cache immediately
 }
 
 func generateAPIKey() (string, error) {
@@ -73,7 +74,8 @@ func (h *adminHandler) rotateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.repo.RotateAPIKey(r.Context(), id, newKey); err != nil {
+	oldKey, err := h.repo.RotateAPIKey(r.Context(), id, newKey)
+	if err != nil {
 		if errors.Is(err, tenants.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "tenant not found")
 			return
@@ -81,5 +83,9 @@ func (h *adminHandler) rotateKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to rotate key")
 		return
 	}
+
+	// Evict the old key so it is rejected immediately, not after the cache TTL.
+	h.evictKey(oldKey)
+
 	writeJSON(w, http.StatusOK, map[string]string{"api_key": newKey})
 }

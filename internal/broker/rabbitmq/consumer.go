@@ -192,4 +192,3 @@ func ConsumeBatchQueue(ctx context.Context, url, queue string, batchSize, drainM
 		}
 	}
 }
-
