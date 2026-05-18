@@ -1,11 +1,10 @@
-.PHONY: build migrate api relay worker ingest cleanup \
+.PHONY: all build migrate api relay worker ingest cleanup \
         infra infra-down \
-        test test-integration test-integration-down fmt tidy clean
+        test-integration test-integration-down \
+        check vet fmt tidy clean
 
-# ── Integration test connection strings (docker-compose.test.yml ports) ───────
-TEST_PG_DSN       := postgres://synapse:synapse@localhost:5433/synapse_test?sslmode=disable
-TEST_REDIS_ADDR   := localhost:6380
-TEST_RABBITMQ_URL := amqp://guest:guest@localhost:5673/
+all: tidy fmt vet build test-integration
+
 
 build:
 	go build -o bin/api     ./cmd/api
@@ -39,22 +38,29 @@ ingest:
 cleanup:
 	go run ./cmd/cleanup
 
-test:
-	go test ./... -short -count=1 -timeout 60s
-
-# Spin up isolated test containers, run integration tests against them, tear down.
-# Containers are always removed (docker compose down -v) even when tests fail.
+# Start infra in the background, run tests with direct log streaming, always clean up.
 test-integration:
-	docker compose -f docker-compose.test.yml up -d --wait
-	@trap 'docker compose -f docker-compose.test.yml down -v' EXIT; \
-	  SYNAPSE_TEST_PG_DSN="$(TEST_PG_DSN)" \
-	  SYNAPSE_TEST_REDIS_ADDR="$(TEST_REDIS_ADDR)" \
-	  SYNAPSE_TEST_RABBITMQ_URL="$(TEST_RABBITMQ_URL)" \
-	  go test -tags integration -count=1 -timeout 300s -v ./e2e/...
+	@docker compose -f docker-compose.test.yml up -d --wait postgres redis rabbitmq; \
+	  docker compose -f docker-compose.test.yml run --rm --build test; \
+	  STATUS=$$?; \
+	  docker compose -f docker-compose.test.yml down -v; \
+	  exit $$STATUS
 
-# Manually remove test containers and volumes (useful after a cancelled run).
+# Manual cleanup if a run was cancelled before down could run.
 test-integration-down:
 	docker compose -f docker-compose.test.yml down -v
+
+# Read-only checks — used by CI and runnable locally before pushing.
+# Fails if fmt or tidy would produce any diff; never modifies files.
+check:
+	@test -z "$$(gofmt -l .)" || (echo "Run 'make fmt' to fix formatting:" && gofmt -l . && exit 1)
+	@go mod tidy && git diff --exit-code go.mod go.sum || (echo "Run 'make tidy' to fix go.mod/go.sum" && exit 1)
+	go vet ./...
+	go vet -tags integration ./e2e/...
+
+vet:
+	go vet ./...
+	go vet -tags integration ./e2e/...
 
 fmt:
 	gofmt -w .
