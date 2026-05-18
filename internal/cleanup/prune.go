@@ -8,28 +8,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// PruneOldEvents deletes events (and their deliveries via CASCADE) older than age.
-// Runs inside a single transaction so a partial failure leaves no orphans.
+// PruneOldEvents deletes events older than age. Cascade delete on the FK
+// removes their deliveries automatically. A single DELETE is statement-atomic
+// in Postgres — no explicit transaction needed.
 func PruneOldEvents(ctx context.Context, pool *pgxpool.Pool, age time.Duration) error {
-	cutoff := time.Now().Add(-age)
-
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-
-	res, err := tx.Exec(ctx,
-		`DELETE FROM events WHERE created_at < $1`, cutoff,
+	res, err := pool.Exec(ctx,
+		`DELETE FROM events WHERE created_at < $1`,
+		time.Now().Add(-age),
 	)
 	if err != nil {
 		return err
 	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-
-	slog.Info("cleanup: pruned old events", "rows", res.RowsAffected(), "cutoff", cutoff.Format(time.RFC3339))
+	slog.Info("cleanup: pruned old events", "rows", res.RowsAffected(), "age", age)
 	return nil
 }

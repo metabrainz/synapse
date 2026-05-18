@@ -12,7 +12,6 @@ type BatchMsg struct {
 // Publisher publishes messages to named routing keys.
 // Implementations must be safe for concurrent use.
 type Publisher interface {
-	Publish(ctx context.Context, routingKey string, body []byte) error
 	// PublishBatch fires all messages without waiting for confirms, then drains
 	// confirms in a single pass. Returns the IDs that the broker acked; nacked
 	// or unconfirmed IDs are omitted and will be retried by ResetStuck.

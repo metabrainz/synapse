@@ -78,6 +78,10 @@ func (r *Repo) Delete(ctx context.Context, tenantID string, id int64) error {
 	return err
 }
 
+// RecordFailure increments consecutive_failures and marks the channel "broken"
+// once failures reach threshold. Broken channels are excluded from fanout by
+// ListActiveForEvent (status = 'active' filter), preventing further attempts
+// until the operator investigates and resets the channel.
 func (r *Repo) RecordFailure(ctx context.Context, id int64, threshold int) error {
 	_, err := r.pool.Exec(ctx,
 		`UPDATE channels
@@ -91,6 +95,7 @@ func (r *Repo) RecordFailure(ctx context.Context, id int64, threshold int) error
 	return err
 }
 
+// ResetFailures clears the failure counter and restores the channel to active.
 func (r *Repo) ResetFailures(ctx context.Context, id int64) error {
 	_, err := r.pool.Exec(ctx,
 		`UPDATE channels

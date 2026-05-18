@@ -1,5 +1,6 @@
 http:
   port: 8080
+  admin_key: ""
 
 postgres:
   host: localhost
@@ -8,7 +9,6 @@ postgres:
   password: synapse
   dbname: synapse
   sslmode: disable
-  max_conns: 20
 
 redis:
   addr: localhost:6379
@@ -18,9 +18,23 @@ redis:
 rabbitmq:
   url: amqp://guest:guest@localhost:5672/
 
-worker:
-  webhook_concurrency: 10
-  email_concurrency: 5
-
 relay:
   outbox_poll_ms: 100
+  workers: 4
+  batch_size: 100
+
+ingest:
+  workers: 4
+  batch_size: 50
+  drain_ms: 10
+
+worker:
+  db_pool: 15
+  channels:
+    webhook:
+      concurrency: 10
+      prefetch: 10
+
+rate_limit:
+  burst: 100
+  rate_per_sec: 50

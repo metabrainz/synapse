@@ -1,3 +1,6 @@
+// cache.go — in-memory subscription cache invalidated via PG LISTEN/NOTIFY.
+// The cache is rebuilt from Postgres on startup and after each notification.
+
 package fanout
 
 import (
@@ -33,7 +36,6 @@ type Cache struct {
 // NewCache creates a cache backed by pool for query traffic.
 // listenDSN must be a direct Postgres DSN (not PgBouncer) because LISTEN/NOTIFY
 // requires a persistent session that PgBouncer transaction mode doesn't support.
-// Pass an empty string to derive the DSN from pool's connection config (local dev).
 func NewCache(pool *pgxpool.Pool, subs *subscriptions.Repo, listenDSN string) *Cache {
 	if listenDSN == "" {
 		listenDSN = pool.Config().ConnConfig.ConnString()
@@ -71,6 +73,7 @@ func (c *Cache) ListActiveForEvent(_ context.Context, tenantID, userID, eventTyp
 	return out, nil
 }
 
+// rebuild rebuilds the cache by listing all active subscriptions and building the exact and wildcard maps.
 func (c *Cache) rebuild(ctx context.Context) error {
 	entries, err := c.subs.ListAllForCache(ctx)
 	if err != nil {

@@ -31,6 +31,9 @@ type Adapter struct {
 	client *http.Client
 }
 
+// New creates a webhook adapter with a connection-pooled HTTP client.
+// MaxIdleConnsPerHost is set high because workers may fan out to the same host
+// concurrently and we don't want to repeatedly open new TCP connections.
 func New() *Adapter {
 	return &Adapter{client: &http.Client{
 		Timeout:   10 * time.Second,
@@ -38,6 +41,11 @@ func New() *Adapter {
 	}}
 }
 
+func (a *Adapter) MaxAttempts() int { return 5 }
+
+// Deliver POSTs the event payload to the webhook URL in the channel config.
+// X-Synapse-* headers let the receiver validate delivery metadata without
+// parsing the body (useful for HMAC verification or logging).
 func (a *Adapter) Deliver(ctx context.Context, msg fanout.WorkerMessage) error {
 	var cfg channelConfig
 	if err := json.Unmarshal(msg.ChannelConfig, &cfg); err != nil {

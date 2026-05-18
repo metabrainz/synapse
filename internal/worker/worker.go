@@ -77,7 +77,13 @@ func Handler(
 
 		// Publish updated message (with bumped attempt) to the retry queue.
 		msg.Attempt = nextAttempt
-		retryBody, _ := json.Marshal(msg)
+		retryBody, err := json.Marshal(msg)
+		if err != nil {
+			// WorkerMessage contains only JSON-safe types; this path is unreachable
+			// in practice but we must not silently drop the message.
+			slog.Error("worker: marshal retry message", "delivery_id", msg.DeliveryID, "err", err)
+			return err
+		}
 		ttl := backoffMs(nextAttempt)
 
 		if pubErr := consumer.PublishRetry(ctx, channelType, retryBody, ttl); pubErr != nil {

@@ -44,8 +44,14 @@ func (c *authCache) get(key string) (*tenants.Tenant, bool) {
 
 func (c *authCache) set(key string, t *tenants.Tenant) {
 	c.mu.Lock()
-	c.m[key] = authEntry{tenant: t, expiresAt: time.Now().Add(c.ttl)}
-	c.mu.Unlock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	for k, e := range c.m {
+		if now.After(e.expiresAt) {
+			delete(c.m, k)
+		}
+	}
+	c.m[key] = authEntry{tenant: t, expiresAt: now.Add(c.ttl)}
 }
 
 // Authenticate validates the Bearer API key and puts the tenant in the request context.

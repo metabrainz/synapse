@@ -25,7 +25,11 @@ func (h *channelsHandler) create(w http.ResponseWriter, r *http.Request) {
 		Type   string          `json:"type"`
 		Config json.RawMessage `json:"config"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Type == "" {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if body.Type == "" {
 		writeError(w, http.StatusBadRequest, "type is required")
 		return
 	}

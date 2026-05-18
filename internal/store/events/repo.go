@@ -1,3 +1,7 @@
+// Package events manages the events table. InsertBatch uses unnest to write
+// multiple rows in one round-trip and returns IDs in the same order as the
+// input slice, so callers can wire event IDs into subsequent delivery inserts
+// without a secondary query.
 package events
 
 import (
@@ -31,8 +35,10 @@ func Insert(ctx context.Context, q store.Querier, e Event) (int64, error) {
 	return id, err
 }
 
-// InsertBatch inserts multiple events in one round-trip and returns their IDs
-// in the same order as the input slice. Uses unnest to avoid N individual inserts.
+// InsertBatch inserts n events in one round-trip by expanding parallel typed
+// arrays with unnest. PostgreSQL preserves array element order within a single
+// unnest, so the returned IDs are positionally aligned with the input slice —
+// callers can zip evs[i] with ids[i] without any secondary sort.
 func InsertBatch(ctx context.Context, q store.Querier, evs []Event) ([]int64, error) {
 	n := len(evs)
 	tenantIDs := make([]string, n)

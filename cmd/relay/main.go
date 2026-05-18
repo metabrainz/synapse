@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/metabrainz/synapse/internal/adapter"
 	"github.com/metabrainz/synapse/internal/broker"
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
 	"github.com/metabrainz/synapse/internal/config"
@@ -35,17 +36,16 @@ func main() {
 	}
 	defer pool.Close()
 
-	if err := rabbitmq.Setup(cfg.RabbitMQ.URL); err != nil {
+	if err := rabbitmq.Setup(cfg.RabbitMQ.URL, adapter.ChannelTypes()); err != nil {
 		slog.Error("rabbitmq topology", "err", err)
 		os.Exit(1)
 	}
 
-	amqpURL := cfg.RabbitMQ.URL
-	newPub := func() (broker.Publisher, error) { return rabbitmq.New(amqpURL) }
+	newPub := func() (broker.Publisher, error) { return rabbitmq.New(cfg.RabbitMQ.URL) }
 
-	slog.Info("relay: starting", "workers", cfg.Relay.Workers, "poll_ms", cfg.Relay.OutboxPollMs)
+	slog.Info("relay: starting", "workers", cfg.Relay.Workers, "poll_ms", cfg.Relay.OutboxPollMs, "batch_size", cfg.Relay.BatchSize)
 
-	if err := relay.Run(ctx, pool, newPub, cfg.Relay.Workers, cfg.Relay.OutboxPollMs); err != nil && ctx.Err() == nil {
+	if err := relay.Run(ctx, pool, newPub, cfg.Relay.Workers, cfg.Relay.OutboxPollMs, cfg.Relay.BatchSize); err != nil && ctx.Err() == nil {
 		slog.Error("relay", "err", err)
 		os.Exit(1)
 	}

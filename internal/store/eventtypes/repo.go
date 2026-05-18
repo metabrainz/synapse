@@ -1,3 +1,6 @@
+// Package eventtypes manages per-tenant event type definitions. Tenants must
+// register an event type before publishing events of that type — the events
+// table has a foreign key to event_type_definitions that enforces this.
 package eventtypes
 
 import (

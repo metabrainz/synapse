@@ -1,3 +1,7 @@
+// Package store provides shared database helpers: the Querier interface (satisfied
+// by both *pgxpool.Pool and pgx.Tx), WithTx for transactional closures, and
+// helpers for interpreting PostgreSQL error codes. The sub-packages (events,
+// deliveries, outbox, …) contain the table-specific query functions.
 package store
 
 import (

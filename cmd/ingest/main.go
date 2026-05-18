@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/metabrainz/synapse/internal/adapter"
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
 	"github.com/metabrainz/synapse/internal/config"
 	"github.com/metabrainz/synapse/internal/fanout"
@@ -36,7 +37,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	if err := rabbitmq.Setup(cfg.RabbitMQ.URL); err != nil {
+	if err := rabbitmq.Setup(cfg.RabbitMQ.URL, adapter.ChannelTypes()); err != nil {
 		slog.Error("rabbitmq topology", "err", err)
 		os.Exit(1)
 	}
@@ -48,7 +49,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fan := fanout.New(cache)
+	fan := fanout.New(cache, adapter.MaxAttemptsFor)
 	consumer := ingest.NewConsumer(pool, fan)
 
 	slog.Info("ingest: starting", "workers", cfg.Ingest.Workers, "batch_size", cfg.Ingest.BatchSize, "drain_ms", cfg.Ingest.DrainMs)

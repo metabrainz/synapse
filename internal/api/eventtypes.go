@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -19,7 +20,11 @@ func (h *eventTypesHandler) register(w http.ResponseWriter, r *http.Request) {
 		EventType   string `json:"event_type"`
 		Description string `json:"description"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.EventType == "" {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if body.EventType == "" {
 		writeError(w, http.StatusBadRequest, "event_type is required")
 		return
 	}
@@ -46,7 +51,7 @@ func (h *eventTypesHandler) delete(w http.ResponseWriter, r *http.Request) {
 	eventType := chi.URLParam(r, "event_type")
 
 	if err := h.repo.Delete(r.Context(), tenantID, eventType); err != nil {
-		if err == eventtypes.ErrNotFound {
+		if errors.Is(err, eventtypes.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "event type not found")
 			return
 		}

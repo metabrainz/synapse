@@ -10,20 +10,13 @@ import (
 	"github.com/metabrainz/synapse/internal/broker"
 )
 
-const (
-	exchange      = "deliveries"
-	exchangeRetry = "deliveries.retry"
-	exchangeDead  = "deliveries.dead"
-
-	// confirmBufSize must exceed the largest batch size to prevent the broker's
-	// internal goroutine from blocking while we're still in Phase A publishing.
-	confirmBufSize = 512
-)
+// confirmBufSize must exceed the largest batch size to prevent the broker's
+// internal goroutine from blocking while we're still in Phase A publishing.
+const confirmBufSize = 512
 
 // Publisher holds one AMQP connection and channel in confirm mode.
-// Every Publish call blocks until the broker sends Basic.Ack (or returns an
-// error), giving at-least-once delivery: the relay will not delete an outbox
-// row until the broker has confirmed it received the message.
+// PublishBatch gives at-least-once delivery: the relay will not delete an
+// outbox row until the broker has confirmed it received the message.
 type Publisher struct {
 	url      string
 	mu       sync.Mutex
@@ -55,12 +48,8 @@ func (p *Publisher) connect() error {
 		conn.Close()
 		return fmt.Errorf("amqp channel: %w", err)
 	}
-	if err := ch.ExchangeDeclare(exchange, "topic", true, false, false, false, nil); err != nil {
-		conn.Close()
-		return fmt.Errorf("declare exchange: %w", err)
-	}
 	// Enable publisher confirms. The broker will now ack every published
-	// message. Without this, Publish is fire-and-forget at the protocol level.
+	// message. Without this, publishing is fire-and-forget at the protocol level.
 	if err := ch.Confirm(false); err != nil {
 		conn.Close()
 		return fmt.Errorf("enable publisher confirms: %w", err)
@@ -69,47 +58,6 @@ func (p *Publisher) connect() error {
 	p.ch = ch
 	p.confirms = ch.NotifyPublish(make(chan amqp.Confirmation, confirmBufSize))
 	return nil
-}
-
-// Publish sends one message and waits for the broker to confirm it.
-// Returns an error if the broker nacks, the connection drops, or ctx is
-// cancelled — in all cases the caller (relay) must not delete the outbox row.
-func (p *Publisher) Publish(ctx context.Context, routingKey string, body []byte) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	msg := amqp.Publishing{
-		ContentType:  "application/json",
-		DeliveryMode: amqp.Persistent,
-		Body:         body,
-	}
-
-	if err := p.ch.PublishWithContext(ctx, exchange, routingKey, false, false, msg); err != nil {
-		// Channel is broken — reconnect and retry once.
-		// connect() replaces p.confirms with a fresh channel, so the
-		// confirm we wait for below belongs to this second publish, not
-		// the failed one.
-		if rerr := p.connect(); rerr != nil {
-			return fmt.Errorf("publish failed and reconnect failed: %w", rerr)
-		}
-		if err = p.ch.PublishWithContext(ctx, exchange, routingKey, false, false, msg); err != nil {
-			return fmt.Errorf("publish after reconnect: %w", err)
-		}
-	}
-
-	// Wait for broker acknowledgement.
-	select {
-	case confirm, ok := <-p.confirms:
-		if !ok {
-			return fmt.Errorf("confirm channel closed (connection dropped)")
-		}
-		if !confirm.Ack {
-			return fmt.Errorf("broker nacked message (delivery tag %d)", confirm.DeliveryTag)
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
 }
 
 // PublishBatch publishes all messages first, then drains publisher confirms

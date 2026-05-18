@@ -1,15 +1,19 @@
+// Package config defines the Synapse configuration schema and loads it from a
+// YAML file with environment variable overrides. All services share the same
+// Config struct; each service only reads the fields it needs.
 package config
 
 import "fmt"
 
 type Config struct {
-	Postgres PostgresConfig `yaml:"postgres"`
-	Redis    RedisConfig    `yaml:"redis"`
-	RabbitMQ RabbitMQConfig `yaml:"rabbitmq"`
-	HTTP     HTTPConfig     `yaml:"http"`
-	Worker   WorkerConfig   `yaml:"worker"`
-	Relay    RelayConfig    `yaml:"relay"`
-	Ingest   IngestConfig   `yaml:"ingest"`
+	Postgres  PostgresConfig  `yaml:"postgres"`
+	Redis     RedisConfig     `yaml:"redis"`
+	RabbitMQ  RabbitMQConfig  `yaml:"rabbitmq"`
+	HTTP      HTTPConfig      `yaml:"http"`
+	Worker    WorkerConfig    `yaml:"worker"`
+	Relay     RelayConfig     `yaml:"relay"`
+	Ingest    IngestConfig    `yaml:"ingest"`
+	RateLimit RateLimitConfig `yaml:"rate_limit"`
 }
 
 type PostgresConfig struct {
@@ -52,22 +56,54 @@ type RabbitMQConfig struct {
 type HTTPConfig struct {
 	Port     int    `yaml:"port"`
 	AdminKey string `yaml:"admin_key"`
-	DBConns  int32  `yaml:"db_conns"`
+	// DBConns is the maximum number of Postgres connections the API pool may hold.
+	// Each concurrent HTTP request can use one connection, so size this to the
+	// expected concurrent request peak, not the total request rate.
+	DBConns int32 `yaml:"db_conns"`
 }
 
 type WorkerConfig struct {
-	WebhookConcurrency int `yaml:"webhook_concurrency"`
-	EmailConcurrency   int `yaml:"email_concurrency"`
-	DBPool             int `yaml:"db_pool"`
+	// DBPool is the maximum number of Postgres connections shared across all
+	// worker goroutines for writing delivery status updates.
+	DBPool   int                            `yaml:"db_pool"`
+	Channels map[string]ChannelWorkerConfig `yaml:"channels"`
+}
+
+// ChannelWorkerConfig holds per-channel-type tuning knobs.
+// Adding a new channel type requires only a new entry in the map — no struct changes.
+type ChannelWorkerConfig struct {
+	// Concurrency is the number of goroutines consuming from this channel's queue.
+	Concurrency int `yaml:"concurrency"`
+	// Prefetch is the RabbitMQ QoS prefetch count per goroutine — how many
+	// unacked messages RabbitMQ will deliver before waiting for acks.
+	Prefetch int `yaml:"prefetch"`
 }
 
 type RelayConfig struct {
+	// OutboxPollMs is how often (in milliseconds) each relay worker checks for
+	// new PENDING outbox rows. Lower values reduce latency; higher values reduce DB load.
 	OutboxPollMs int `yaml:"outbox_poll_ms"`
 	Workers      int `yaml:"workers"`
+	// BatchSize is the maximum number of outbox rows claimed per relay tick.
+	// Larger batches amortise AMQP confirm overhead but increase per-batch latency.
+	BatchSize int `yaml:"batch_size"`
 }
 
 type IngestConfig struct {
-	Workers   int `yaml:"workers"`
+	Workers int `yaml:"workers"`
+	// BatchSize caps how many AMQP messages are processed in one DB transaction.
+	// Larger batches cut per-event DB overhead but increase memory use and the
+	// blast radius if a transaction fails (all messages are nacked and redelivered).
 	BatchSize int `yaml:"batch_size"`
-	DrainMs   int `yaml:"drain_ms"`
+	// DrainMs is how long each worker waits to accumulate a full batch after the
+	// first message arrives. Higher values improve batch fill under load but add
+	// latency for isolated messages on a quiet queue.
+	DrainMs int `yaml:"drain_ms"`
+}
+
+type RateLimitConfig struct {
+	// Burst is the maximum number of tokens in the bucket — controls peak burst capacity.
+	Burst int `yaml:"burst"`
+	// RatePerSec is the token refill rate — controls sustained throughput.
+	RatePerSec int `yaml:"rate_per_sec"`
 }

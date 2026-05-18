@@ -1,3 +1,7 @@
+// Package ratelimit implements a per-tenant token bucket rate limiter backed by
+// Redis. The bucket state (token count + last-refill timestamp) is stored in a
+// Redis hash and updated atomically by a Lua script, ensuring correctness even
+// under concurrent API requests hitting different API server instances.
 package ratelimit
 
 import (

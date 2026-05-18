@@ -3,21 +3,26 @@ package rabbitmq
 import (
 	"fmt"
 
+	"github.com/metabrainz/synapse/internal/adapter"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// V1 channel types. Adding a new type means adding it here and writing an adapter.
-var ChannelTypes = []string{"webhook", "email"}
-
 const (
+	// Delivery exchange topology — used by publisher, consumer, and topology declaration.
+	exchange      = "deliveries"
+	exchangeRetry = "deliveries.retry"
+	exchangeDead  = "deliveries.dead"
+
 	ExchangeIngest   = "events.ingest"
 	QueueIngest      = "events.ingest"
 	RoutingKeyIngest = "event"
 )
 
 // Setup dials AMQP, declares full topology, then closes the connection.
+// channelTypes must be adapter.ChannelTypes() — the topology and the adapter
+// registry must match so every declared queue has a consumer and vice versa.
 // Call once at service startup before starting the relay or worker.
-func Setup(url string) error {
+func Setup(url string, channelTypes []adapter.ChannelType) error {
 	conn, err := amqp.Dial(url)
 	if err != nil {
 		return fmt.Errorf("amqp dial: %w", err)
@@ -30,7 +35,7 @@ func Setup(url string) error {
 	}
 	defer ch.Close()
 
-	return DeclareTopology(ch, ChannelTypes)
+	return DeclareTopology(ch, channelTypes)
 }
 
 // DeclareTopology declares all exchanges and per-channel-type queue sets.
@@ -47,7 +52,7 @@ func Setup(url string) error {
 //	deliveries.{type}        — main queue, DLX → deliveries.dead
 //	deliveries.{type}.retry  — retry queue, DLX → deliveries (routes back on TTL expiry)
 //	deliveries.dead.{type}   — dead-letter queue (manual inspection)
-func DeclareTopology(ch *amqp.Channel, channelTypes []string) error {
+func DeclareTopology(ch *amqp.Channel, channelTypes []adapter.ChannelType) error {
 	for _, ex := range []string{exchange, exchangeRetry, exchangeDead} {
 		if err := ch.ExchangeDeclare(ex, "topic", true, false, false, false, nil); err != nil {
 			return fmt.Errorf("declare exchange %s: %w", ex, err)
@@ -77,30 +82,32 @@ func declareIngestTopology(ch *amqp.Channel) error {
 	return nil
 }
 
-func declareQueueSet(ch *amqp.Channel, channelType string) error {
-	main := "deliveries." + channelType
-	retry := "deliveries." + channelType + ".retry"
-	dead := "deliveries.dead." + channelType
+func declareQueueSet(ch *amqp.Channel, channelType adapter.ChannelType) error {
+	channelTypeStr := string(channelType)
+
+	main := "deliveries." + channelTypeStr
+	retry := "deliveries." + channelTypeStr + ".retry"
+	dead := "deliveries.dead." + channelTypeStr
 
 	// Main queue: on rejection → dead exchange.
 	if _, err := ch.QueueDeclare(main, true, false, false, false, amqp.Table{
 		"x-dead-letter-exchange":    exchangeDead,
-		"x-dead-letter-routing-key": channelType,
+		"x-dead-letter-routing-key": channelTypeStr,
 	}); err != nil {
 		return fmt.Errorf("declare %s: %w", main, err)
 	}
-	if err := ch.QueueBind(main, channelType, exchange, false, nil); err != nil {
+	if err := ch.QueueBind(main, channelTypeStr, exchange, false, nil); err != nil {
 		return fmt.Errorf("bind %s: %w", main, err)
 	}
 
 	// Retry queue: per-message TTL set at publish time; on TTL expiry → back to main.
 	if _, err := ch.QueueDeclare(retry, true, false, false, false, amqp.Table{
 		"x-dead-letter-exchange":    exchange,
-		"x-dead-letter-routing-key": channelType,
+		"x-dead-letter-routing-key": channelTypeStr,
 	}); err != nil {
 		return fmt.Errorf("declare %s: %w", retry, err)
 	}
-	if err := ch.QueueBind(retry, channelType, exchangeRetry, false, nil); err != nil {
+	if err := ch.QueueBind(retry, channelTypeStr, exchangeRetry, false, nil); err != nil {
 		return fmt.Errorf("bind %s: %w", retry, err)
 	}
 
@@ -108,7 +115,7 @@ func declareQueueSet(ch *amqp.Channel, channelType string) error {
 	if _, err := ch.QueueDeclare(dead, true, false, false, false, nil); err != nil {
 		return fmt.Errorf("declare %s: %w", dead, err)
 	}
-	if err := ch.QueueBind(dead, channelType, exchangeDead, false, nil); err != nil {
+	if err := ch.QueueBind(dead, channelTypeStr, exchangeDead, false, nil); err != nil {
 		return fmt.Errorf("bind %s: %w", dead, err)
 	}
 

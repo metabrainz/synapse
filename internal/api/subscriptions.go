@@ -26,7 +26,11 @@ func (h *subscriptionsHandler) create(w http.ResponseWriter, r *http.Request) {
 		EventType string          `json:"event_type"`
 		Config    json.RawMessage `json:"config"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.EventType == "" {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if body.EventType == "" {
 		writeError(w, http.StatusBadRequest, "event_type is required")
 		return
 	}

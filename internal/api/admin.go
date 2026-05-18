@@ -74,7 +74,7 @@ func (h *adminHandler) rotateKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.RotateAPIKey(r.Context(), id, newKey); err != nil {
-		if err == tenants.ErrNotFound {
+		if errors.Is(err, tenants.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "tenant not found")
 			return
 		}

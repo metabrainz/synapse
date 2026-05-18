@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/metabrainz/synapse/internal/adapter/webhook"
+	"github.com/metabrainz/synapse/internal/adapter"
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
 	"github.com/metabrainz/synapse/internal/config"
 	"github.com/metabrainz/synapse/internal/dedup"
@@ -45,20 +45,25 @@ func main() {
 	}
 	defer rdb.Close()
 
-	if err := rabbitmq.Setup(cfg.RabbitMQ.URL); err != nil {
+	if err := rabbitmq.Setup(cfg.RabbitMQ.URL, adapter.ChannelTypes()); err != nil {
 		slog.Error("rabbitmq topology", "err", err)
 		os.Exit(1)
 	}
 
 	deduper := dedup.New(rdb)
+	g, gctx := errgroup.WithContext(ctx)
 
-	g, ctx := errgroup.WithContext(ctx)
-
-	slog.Info("worker: starting", "webhook_concurrency", cfg.Worker.WebhookConcurrency)
-
-	g.Go(func() error {
-		return worker.Run(ctx, "webhook", cfg.Worker.WebhookConcurrency, cfg.RabbitMQ.URL, webhook.New(), deduper, pool)
-	})
+	for channelType, chanCfg := range cfg.Worker.Channels {
+		ad, ok := adapter.Registry[adapter.ChannelType(channelType)]
+		if !ok {
+			slog.Warn("worker: no adapter registered, skipping", "type", channelType)
+			continue
+		}
+		slog.Info("worker: starting", "type", channelType, "concurrency", chanCfg.Concurrency, "prefetch", chanCfg.Prefetch)
+		g.Go(func() error {
+			return worker.Run(gctx, channelType, chanCfg.Concurrency, chanCfg.Prefetch, cfg.RabbitMQ.URL, ad, deduper, pool)
+		})
+	}
 
 	if err := g.Wait(); err != nil && ctx.Err() == nil {
 		slog.Error("worker", "err", err)

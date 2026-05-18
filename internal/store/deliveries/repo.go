@@ -1,3 +1,6 @@
+// Package deliveries tracks the status of each (event, channel) delivery attempt.
+// InsertBatch returns IDs positionally aligned with its input so the fanout can
+// embed delivery IDs into outbox payloads without a second query.
 package deliveries
 
 import (
@@ -30,18 +33,10 @@ type Delivery struct {
 	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
-func Insert(ctx context.Context, q store.Querier, d Delivery) (int64, error) {
-	var id int64
-	err := q.QueryRow(ctx,
-		`INSERT INTO deliveries (event_id, channel_id, channel_type, max_attempts)
-		 VALUES ($1, $2, $3, $4) RETURNING id`,
-		d.EventID, d.ChannelID, d.ChannelType, d.MaxAttempts,
-	).Scan(&id)
-	return id, err
-}
-
-// InsertBatch inserts all deliveries in one round-trip and returns their IDs
-// in the same order as the input slice. Uses unnest to avoid N individual inserts.
+// InsertBatch inserts n deliveries in one round-trip using unnest. Returned IDs
+// are positionally aligned with the input slice — callers can zip ds[i] with
+// ids[i] to embed the database-assigned ID into outbox payloads immediately
+// after this call, without a second query.
 func InsertBatch(ctx context.Context, q store.Querier, ds []Delivery) ([]int64, error) {
 	n := len(ds)
 	eventIDs := make([]int64, n)

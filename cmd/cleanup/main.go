@@ -17,8 +17,10 @@ import (
 
 func main() {
 	cfgPath := flag.String("config", "config.yaml", "path to config file")
-	interval := flag.Duration("interval", 0, "run continuously at this interval (0 = run once and exit)")
-	eventAge := flag.Duration("event-age", 30*24*time.Hour, "delete events older than this (default 30 days)")
+	interval   := flag.Duration("interval", 0, "run continuously at this interval (0 = run once and exit)")
+	eventAge   := flag.Duration("event-age", 30*24*time.Hour, "delete events older than this (default 30 days)")
+	pendingAge := flag.Duration("pending-age", time.Hour, "mark PENDING deliveries as DEAD after this (default 1h)")
+	retryAge   := flag.Duration("retry-age", 3*time.Hour, "mark RETRYING deliveries as DEAD after this (default 3h)")
 	flag.Parse()
 
 	cfg, err := config.Load(*cfgPath)
@@ -38,7 +40,7 @@ func main() {
 	defer pool.Close()
 
 	run := func() {
-		if err := cleanup.ReconcileStale(ctx, pool); err != nil {
+		if err := cleanup.ReconcileStale(ctx, pool, *pendingAge, *retryAge); err != nil {
 			slog.Error("cleanup: reconcile", "err", err)
 		}
 		if err := cleanup.PruneOldEvents(ctx, pool, *eventAge); err != nil {
@@ -51,7 +53,7 @@ func main() {
 		}
 	}
 
-	slog.Info("cleanup: starting", "interval", *interval, "event_age", *eventAge)
+	slog.Info("cleanup: starting", "interval", *interval, "event_age", *eventAge, "pending_age", *pendingAge, "retry_age", *retryAge)
 	run()
 
 	if *interval == 0 {

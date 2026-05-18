@@ -1,3 +1,10 @@
+// Package dedup provides two Redis-backed deduplication checks:
+//   - Delivery dedup: prevents a worker from processing the same (delivery, attempt)
+//     pair twice when RabbitMQ redelivers an already-processed message.
+//   - Idempotency dedup: fast-path pre-check for API-supplied idempotency keys.
+//
+// Both checks fail open on Redis errors — the PostgreSQL unique constraint is
+// the hard backstop that prevents actual duplicate writes.
 package dedup
 
 import (

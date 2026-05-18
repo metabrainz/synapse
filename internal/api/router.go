@@ -10,6 +10,7 @@ import (
 	"github.com/metabrainz/synapse/internal/api/middleware"
 	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/ratelimit"
 	"github.com/metabrainz/synapse/internal/store/channels"
 	"github.com/metabrainz/synapse/internal/store/eventtypes"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
@@ -25,6 +26,7 @@ type HealthChecks struct {
 type Config struct {
 	AdminKey string
 	Health   HealthChecks
+	Limiter  *ratelimit.Limiter // nil disables rate limiting
 }
 
 func NewRouter(
@@ -80,6 +82,14 @@ func NewRouter(
 
 	// Tenant-authenticated routes
 	r.With(middleware.Authenticate(tenantRepo)).Route("/v1", func(r chi.Router) {
+		if cfg.Limiter != nil {
+			r.Use(cfg.Limiter.Middleware(func(r *http.Request) string {
+				if t := middleware.TenantFromContext(r.Context()); t != nil {
+					return t.ID
+				}
+				return ""
+			}))
+		}
 		// Event ingestion
 		ing := &ingestHandler{pool: pool, fan: fan, deduper: deduper}
 		r.Post("/events", ing.ServeHTTP)

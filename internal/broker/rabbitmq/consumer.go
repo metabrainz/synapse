@@ -118,22 +118,22 @@ func ConsumeBatchQueue(ctx context.Context, url, queue string, batchSize, drainM
 	}
 	defer conn.Close()
 
-	ch, err := conn.Channel()
+	channel, err := conn.Channel()
 	if err != nil {
 		return fmt.Errorf("amqp channel: %w", err)
 	}
-	defer ch.Close()
+	defer channel.Close()
 
-	if err := ch.Qos(batchSize, 0, false); err != nil {
+	if err := channel.Qos(batchSize, 0, false); err != nil {
 		return fmt.Errorf("set qos: %w", err)
 	}
 
-	msgs, err := ch.Consume(queue, "", false, false, false, false, nil)
+	messages, err := channel.Consume(queue, "", false, false, false, false, nil)
 	if err != nil {
 		return fmt.Errorf("consume %s: %w", queue, err)
 	}
 
-	drain := time.Duration(drainMs) * time.Millisecond
+	drainDuration := time.Duration(drainMs) * time.Millisecond
 
 	for {
 		// Block until the first message arrives or ctx is cancelled.
@@ -141,25 +141,26 @@ func ConsumeBatchQueue(ctx context.Context, url, queue string, batchSize, drainM
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case msg, ok := <-msgs:
+		case message, ok := <-messages:
 			if !ok {
 				return fmt.Errorf("amqp channel closed")
 			}
-			first = msg
+			first = message
 		}
 
 		batch := []amqp.Delivery{first}
-		timer := time.NewTimer(drain)
+		timer := time.NewTimer(drainDuration)
 
+		// Collect messages until the batch is full or the drain duration expires or the context is cancelled.
 	collect:
 		for len(batch) < batchSize {
 			select {
-			case msg, ok := <-msgs:
+			case message, ok := <-messages:
 				if !ok {
 					timer.Stop()
 					break collect
 				}
-				batch = append(batch, msg)
+				batch = append(batch, message)
 			case <-timer.C:
 				break collect
 			case <-ctx.Done():
@@ -172,60 +173,23 @@ func ConsumeBatchQueue(ctx context.Context, url, queue string, batchSize, drainM
 		}
 		timer.Stop()
 
-		bodies := make([][]byte, len(batch))
-		for i, m := range batch {
-			bodies[i] = m.Body
+		batchBodies := make([][]byte, len(batch))
+		for i, message := range batch {
+			batchBodies[i] = message.Body
 		}
 
-		if err := handler(ctx, bodies); err != nil {
-			for _, m := range batch {
-				m.Nack(false, true)
+		// Process the batch end-to-end inside a single transaction.
+		if err := handler(ctx, batchBodies); err != nil {
+			// Nack all messages in the batch.
+			for _, message := range batch {
+				message.Nack(false, true)
 			}
 		} else {
-			for _, m := range batch {
-				m.Ack(false)
+			// Ack all messages in the batch.
+			for _, message := range batch {
+				message.Ack(false)
 			}
 		}
 	}
 }
 
-// ConsumeQueue is a simple blocking consume loop for an arbitrary named queue.
-// Returns when ctx is cancelled or the AMQP channel closes.
-func ConsumeQueue(ctx context.Context, url, queue string, prefetch int, handler Handler) error {
-	conn, err := amqp.Dial(url)
-	if err != nil {
-		return fmt.Errorf("amqp dial: %w", err)
-	}
-	defer conn.Close()
-
-	ch, err := conn.Channel()
-	if err != nil {
-		return fmt.Errorf("amqp channel: %w", err)
-	}
-	defer ch.Close()
-
-	if err := ch.Qos(prefetch, 0, false); err != nil {
-		return fmt.Errorf("set qos: %w", err)
-	}
-
-	msgs, err := ch.Consume(queue, "", false, false, false, false, nil)
-	if err != nil {
-		return fmt.Errorf("consume %s: %w", queue, err)
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case msg, ok := <-msgs:
-			if !ok {
-				return fmt.Errorf("amqp channel closed")
-			}
-			if err := handler(ctx, msg.Body); err != nil {
-				msg.Reject(false)
-			} else {
-				msg.Ack(false)
-			}
-		}
-	}
-}

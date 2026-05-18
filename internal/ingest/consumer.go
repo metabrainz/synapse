@@ -1,3 +1,8 @@
+// Package ingest consumes raw events from the RabbitMQ ingest queue, validates
+// them, and fans them out into the delivery pipeline. It uses batch processing
+// to amortise transaction overhead: one DB transaction handles up to BatchSize
+// events. Individual constraint violations fall back to per-event processing
+// so a single bad message cannot block an entire batch.
 package ingest
 
 import (
@@ -54,10 +59,9 @@ func (c *Consumer) Run(ctx context.Context, amqpURL string, workers, batchSize, 
 	return g.Wait()
 }
 
-// handleBatch parses all bodies, drops malformed ones, then writes the valid
-// set in a single transaction: one events.InsertBatch + one fanout.FanBatch.
-func (c *Consumer) handleBatch(ctx context.Context, bodies [][]byte) error {
-	now := time.Now()
+// parseMessages decodes and validates raw AMQP bodies, dropping malformed or
+// incomplete messages with a log line. All valid events share the same timestamp.
+func parseMessages(bodies [][]byte, now time.Time) []events.Event {
 	evs := make([]events.Event, 0, len(bodies))
 	for _, body := range bodies {
 		var msg Message
@@ -81,6 +85,22 @@ func (c *Consumer) handleBatch(ctx context.Context, bodies [][]byte) error {
 			CreatedAt:      now,
 		})
 	}
+	return evs
+}
+
+// handleBatch processes one drained batch end-to-end inside a single transaction:
+//  1. Parse + validate each AMQP body via parseMessages — malformed or incomplete
+//     messages are logged and dropped; they will never ack so RabbitMQ won't redeliver them.
+//  2. events.InsertBatch — one round-trip; returned IDs are positionally aligned.
+//  3. fanout.FanBatch — resolves subscriptions, writes all deliveries (gets IDs),
+//     marshals payloads, writes all outbox rows; two round-trips, N events flat.
+//
+// Returning an error nacks the entire batch, causing RabbitMQ to redeliver all
+// messages in it. Constraint violations (duplicate idempotency key, unregistered
+// event type) trigger per-event fallback processing instead of nacking — they
+// signal bad data that will not fix itself on retry.
+func (c *Consumer) handleBatch(ctx context.Context, bodies [][]byte) error {
+	evs := parseMessages(bodies, time.Now())
 	if len(evs) == 0 {
 		return nil
 	}
@@ -101,16 +121,62 @@ func (c *Consumer) handleBatch(ctx context.Context, bodies [][]byte) error {
 		deliveryCount = count
 		return nil
 	})
-	if err != nil {
-		if store.IsUniqueViolation(err) {
-			// Batch contains a duplicate idempotency key; nack so RabbitMQ
-			// redelivers — the relay's dedup check will filter the true duplicate.
-			slog.Warn("ingest: batch has duplicate idempotency key, will redeliver", "size", len(evs))
-			return err
-		}
-		return err
+	if err == nil {
+		slog.Info("ingest: batch processed", "events", len(evs), "deliveries", deliveryCount)
+		return nil
 	}
 
-	slog.Info("ingest: batch processed", "events", len(evs), "deliveries", deliveryCount)
+	if store.IsUniqueViolation(err) || store.IsForeignKeyViolation(err) {
+		return c.handleEach(ctx, evs)
+	}
+	return err
+}
+
+// handleEach is the per-event fallback when the batch path hits a constraint
+// violation. Each event is processed independently so one bad event cannot
+// block or poison the rest of the batch.
+func (c *Consumer) handleEach(ctx context.Context, evs []events.Event) error {
+	for _, ev := range evs {
+		if err := c.processOne(ctx, ev); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// processOne inserts a single event and fans it out in one transaction.
+// Constraint violations are classified and dropped rather than propagated:
+//   - Unique violation  → duplicate idempotency key; skip (acked).
+//   - FK violation      → unregistered event type; drop (acked).
+//   - Any other error   → transient failure; caller nacks the batch.
+//     Already-committed events in the batch are skipped as duplicates on retry
+//     if they carry an idempotency key; events without one may be inserted twice.
+func (c *Consumer) processOne(ctx context.Context, ev events.Event) error {
+	var count int
+	err := store.WithTx(ctx, c.pool, func(q store.Querier) error {
+		id, err := events.Insert(ctx, q, ev)
+		if err != nil {
+			return err
+		}
+		ev.ID = id
+		n, err := c.fan.Fan(ctx, q, ev)
+		if err != nil {
+			return err
+		}
+		count = n
+		return nil
+	})
+	switch {
+	case err == nil:
+		slog.Info("ingest: event processed", "tenant", ev.TenantID, "event_type", ev.EventType, "deliveries", count)
+		return nil
+	case store.IsUniqueViolation(err):
+		slog.Info("ingest: duplicate event skipped", "tenant", ev.TenantID, "idempotency_key", ev.IdempotencyKey)
+		return nil
+	case store.IsForeignKeyViolation(err):
+		slog.Error("ingest: unregistered event type, dropping", "tenant", ev.TenantID, "event_type", ev.EventType)
+		return nil
+	default:
+		return err
+	}
 }

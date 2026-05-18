@@ -12,10 +12,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/metabrainz/synapse/internal/adapter"
 	"github.com/metabrainz/synapse/internal/api"
 	"github.com/metabrainz/synapse/internal/config"
 	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/ratelimit"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/channels"
 	"github.com/metabrainz/synapse/internal/store/eventtypes"
@@ -61,8 +63,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	fan := fanout.New(cache)
+	fan := fanout.New(cache, adapter.MaxAttemptsFor)
 	deduper := dedup.New(rdb)
+
+	var limiter *ratelimit.Limiter
+	if cfg.RateLimit.Burst > 0 {
+		limiter = ratelimit.New(rdb, cfg.RateLimit.Burst, cfg.RateLimit.RatePerSec)
+	}
 
 	router := api.NewRouter(
 		api.Config{
@@ -70,6 +77,7 @@ func main() {
 			Health: api.HealthChecks{
 				Redis: func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
 			},
+			Limiter: limiter,
 		},
 		pool,
 		tenantRepo,

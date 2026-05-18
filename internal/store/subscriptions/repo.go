@@ -1,3 +1,7 @@
+// Package subscriptions manages the mapping from channels to event types.
+// A subscription with event_type = '*' matches every event for that user.
+// ListAllForCache loads the full subscription table for the in-memory fanout
+// cache; ListActiveForEvent is the live DB fallback used without the cache.
 package subscriptions
 
 import (

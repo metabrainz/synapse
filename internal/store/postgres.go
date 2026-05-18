@@ -10,6 +10,9 @@ import (
 	"github.com/metabrainz/synapse/internal/config"
 )
 
+// NewPool creates and validates a pgxpool with the given max connection count.
+// MinConns is capped at 5 to avoid holding open connections the service will
+// never actually use (e.g. the relay only needs workers connections max).
 func NewPool(ctx context.Context, cfg config.PostgresConfig, maxConns int32) (*pgxpool.Pool, error) {
 	pcfg, err := pgxpool.ParseConfig(cfg.DSN())
 	if err != nil {
@@ -17,7 +20,7 @@ func NewPool(ctx context.Context, cfg config.PostgresConfig, maxConns int32) (*p
 	}
 	pcfg.MaxConns = maxConns
 	pcfg.MinConns = min(5, maxConns)
-	pcfg.MaxConnLifetime = 30 * time.Minute
+	pcfg.MaxConnLifetime = 30 * time.Minute // rotate connections to avoid stale TCP
 	pcfg.MaxConnIdleTime = 5 * time.Minute
 	pcfg.HealthCheckPeriod = 30 * time.Second
 

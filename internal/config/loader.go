@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -51,16 +52,22 @@ func defaultConfig() Config {
 		Relay: RelayConfig{
 			OutboxPollMs: 100,
 			Workers:      4,
+			BatchSize:    100,
 		},
 		Worker: WorkerConfig{
-			WebhookConcurrency: 10,
-			EmailConcurrency:   5,
-			DBPool:             15,
+			DBPool: 15,
+			Channels: map[string]ChannelWorkerConfig{
+				"webhook": {Concurrency: 10, Prefetch: 10},
+			},
 		},
 		Ingest: IngestConfig{
 			Workers:   4,
 			BatchSize: 50,
 			DrainMs:   10,
+		},
+		RateLimit: RateLimitConfig{
+			Burst:      100,
+			RatePerSec: 50,
 		},
 	}
 }
@@ -109,16 +116,33 @@ func applyEnv(cfg *Config) error {
 		cfg.Postgres.PgBouncer = true
 	}
 
-	return errors.Join(
+	if err := errors.Join(
 		integer(&cfg.HTTP.Port, "SYNAPSE_HTTP_PORT"),
 		integer(&cfg.Postgres.Port, "SYNAPSE_PG_PORT"),
 		int32v(&cfg.HTTP.DBConns, "SYNAPSE_HTTP_DB_CONNS"),
 		integer(&cfg.Relay.Workers, "SYNAPSE_RELAY_WORKERS"),
 		integer(&cfg.Relay.OutboxPollMs, "SYNAPSE_RELAY_POLL_MS"),
-		integer(&cfg.Worker.WebhookConcurrency, "SYNAPSE_WORKER_WEBHOOK_CONCURRENCY"),
+		integer(&cfg.Relay.BatchSize, "SYNAPSE_RELAY_BATCH_SIZE"),
 		integer(&cfg.Worker.DBPool, "SYNAPSE_WORKER_DB_POOL"),
 		integer(&cfg.Ingest.Workers, "SYNAPSE_INGEST_WORKERS"),
 		integer(&cfg.Ingest.BatchSize, "SYNAPSE_INGEST_BATCH_SIZE"),
 		integer(&cfg.Ingest.DrainMs, "SYNAPSE_INGEST_DRAIN_MS"),
-	)
+		integer(&cfg.RateLimit.Burst, "SYNAPSE_RATELIMIT_BURST"),
+		integer(&cfg.RateLimit.RatePerSec, "SYNAPSE_RATELIMIT_RATE_PER_SEC"),
+	); err != nil {
+		return err
+	}
+
+	for key, ch := range cfg.Worker.Channels {
+		envKey := strings.ToUpper(key)
+		if err := errors.Join(
+			integer(&ch.Concurrency, "SYNAPSE_WORKER_"+envKey+"_CONCURRENCY"),
+			integer(&ch.Prefetch, "SYNAPSE_WORKER_"+envKey+"_PREFETCH"),
+		); err != nil {
+			return err
+		}
+		cfg.Worker.Channels[key] = ch
+	}
+
+	return nil
 }
