@@ -25,11 +25,13 @@ import (
 	"github.com/metabrainz/synapse/internal/config"
 	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/channels"
 	"github.com/metabrainz/synapse/internal/store/eventtypes"
 	"github.com/metabrainz/synapse/internal/store/outbox"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
+	"github.com/metabrainz/synapse/internal/store/tenantrules"
 	"github.com/metabrainz/synapse/internal/store/tenants"
 	"github.com/metabrainz/synapse/internal/worker"
 	"github.com/metabrainz/synapse/testutil"
@@ -64,7 +66,9 @@ func setup(t *testing.T) *env {
 
 	// Truncate all tables so tests that share a local Postgres instance don't bleed.
 	if _, err := pool.Exec(ctx,
-		`TRUNCATE outbox, deliveries, subscriptions, channels, event_type_definitions, events, tenants RESTART IDENTITY CASCADE`,
+		`TRUNCATE outbox, deliveries, subscriptions, channels, event_type_definitions, events,
+		          user_event_subscriptions, user_tenant_channel_mapping, tenant_event_channel_rules,
+		          user_channels, users, tenants RESTART IDENTITY CASCADE`,
 	); err != nil {
 		t.Fatalf("truncate tables: %v", err)
 	}
@@ -109,6 +113,8 @@ func setup(t *testing.T) *env {
 	fan := fanout.New(cache, adapter.MaxAttemptsFor)
 	deduper := dedup.New(rdb)
 
+	reg := schema.New(schema.KnownTenants)
+
 	router := api.NewRouter(
 		api.Config{AdminKey: adminKey},
 		pool,
@@ -116,8 +122,10 @@ func setup(t *testing.T) *env {
 		channels.New(pool),
 		subRepo,
 		eventtypes.New(pool),
+		tenantrules.New(pool),
 		fan,
 		deduper,
+		reg,
 	)
 
 	srv := httptest.NewServer(router)
@@ -201,6 +209,17 @@ func (e *env) registerEventType(tenantID, eventType string) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		e.t.Fatalf("registerEventType: want 201, got %d", resp.StatusCode)
+	}
+}
+
+func (e *env) registerChannelRule(tenantID, eventType, channelType string) {
+	e.t.Helper()
+	resp := e.adminDo("PUT", fmt.Sprintf("/v1/admin/tenants/%s/channel-rules", tenantID),
+		map[string]any{"event_type": eventType, "channel_type": channelType, "is_allowed": true},
+	)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		e.t.Fatalf("registerChannelRule: want 204, got %d", resp.StatusCode)
 	}
 }
 
@@ -344,6 +363,63 @@ func deleteQueues(amqpURL string) error {
 		conn.Close()
 	}
 	return nil
+}
+
+// setupChannel seeds all three routing gates for one (user, tenant, channelType, eventType)
+// combination. Gate 1 goes through the real admin API; Gates 2 and 3 are seeded directly
+// (no user-facing API exists yet). Returns the user_channel ID.
+func (e *env) setupChannel(tenantID, userID, channelType, eventType, channelURL string) int64 {
+	e.t.Helper()
+	e.mustExec(`INSERT INTO users (id) VALUES ($1) ON CONFLICT DO NOTHING`, userID)
+
+	var channelID int64
+	if err := e.pool.QueryRow(e.ctx,
+		`INSERT INTO user_channels (user_id, channel_type, label, config)
+		 VALUES ($1, $2, 'Test', $3) RETURNING id`,
+		userID, channelType, `{"url":"`+channelURL+`"}`,
+	).Scan(&channelID); err != nil {
+		e.t.Fatalf("setupChannel: insert user_channel: %v", err)
+	}
+
+	// Gate 1: admin channel rule — goes through the real HTTP endpoint.
+	e.registerChannelRule(tenantID, eventType, channelType)
+
+	// Gates 2 & 3: no user-facing API yet; seed directly.
+	e.mustExec(
+		`INSERT INTO user_tenant_channel_mapping (user_id, tenant_id, channel_type, user_channel_id, is_enabled)
+		 VALUES ($1, $2, $3, $4, true) ON CONFLICT DO NOTHING`,
+		userID, tenantID, channelType, channelID,
+	)
+	e.mustExec(
+		`INSERT INTO user_event_subscriptions (user_id, tenant_id, event_type, channel_type, is_enabled)
+		 VALUES ($1, $2, $3, $4, true) ON CONFLICT DO NOTHING`,
+		userID, tenantID, eventType, channelType,
+	)
+	return channelID
+}
+
+// setupWebhookChannel is a convenience wrapper around setupChannel for webhook channels.
+func (e *env) setupWebhookChannel(tenantID, userID, eventType, webhookURL string) int64 {
+	return e.setupChannel(tenantID, userID, "webhook", eventType, webhookURL)
+}
+
+func (e *env) mustExec(query string, args ...any) {
+	e.t.Helper()
+	if _, err := e.pool.Exec(e.ctx, query, args...); err != nil {
+		e.t.Fatalf("mustExec: %v\nquery: %s", err, query)
+	}
+}
+
+// parseEventID extracts event_id from a 202 ingest response.
+func parseEventID(t *testing.T, resp *http.Response) int64 {
+	t.Helper()
+	var out map[string]any
+	decodeJSON(t, resp, &out)
+	v, ok := out["event_id"].(float64)
+	if !ok {
+		t.Fatalf("parseEventID: no event_id in response: %v", out)
+	}
+	return int64(v)
 }
 
 // adapterFunc lets tests implement adapter.Adapter inline with a closure.

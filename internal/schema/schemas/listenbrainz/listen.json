@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["listened_at", "track_metadata"],
+  "properties": {
+    "listened_at":    { "type": "integer" },
+    "inserted_at":    { "type": "integer" },
+    "recording_msid": { "type": "string" },
+    "user_name":      { "type": "string" },
+    "track_metadata": {
+      "type": "object",
+      "required": ["track_name", "artist_name"],
+      "properties": {
+        "track_name":   { "type": "string", "minLength": 1 },
+        "artist_name":  { "type": "string", "minLength": 1 },
+        "release_name": { "type": "string" },
+        "additional_info": {
+          "type": "object",
+          "properties": {
+            "artist_names":          { "type": "array", "items": { "type": "string" } },
+            "discnumber":            { "type": "integer" },
+            "duration_ms":           { "type": "integer" },
+            "isrc":                  { "type": "string" },
+            "music_service":         { "type": "string" },
+            "origin_url":            { "type": "string" },
+            "recording_msid":        { "type": "string" },
+            "release_artist_name":   { "type": "string" },
+            "release_artist_names":  { "type": "array", "items": { "type": "string" } },
+            "submission_client":     { "type": "string" },
+            "tracknumber":           { "type": "integer" }
+          },
+          "additionalProperties": true
+        },
+        "mbid_mapping": {
+          "type": "object",
+          "properties": {
+            "recording_mbid": { "type": "string" },
+            "release_mbid":   { "type": "string" },
+            "recording_name": { "type": "string" },
+            "caa_id":         { "type": "integer" },
+            "caa_release_mbid": { "type": "string" },
+            "artist_mbids":   { "type": "array", "items": { "type": "string" } },
+            "artists": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "artist_mbid":         { "type": "string" },
+                  "artist_credit_name":  { "type": "string" },
+                  "join_phrase":         { "type": "string" }
+                },
+                "additionalProperties": true
+              }
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

@@ -11,9 +11,11 @@ import (
 	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/ratelimit"
+	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store/channels"
 	"github.com/metabrainz/synapse/internal/store/eventtypes"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
+	"github.com/metabrainz/synapse/internal/store/tenantrules"
 	"github.com/metabrainz/synapse/internal/store/tenants"
 )
 
@@ -36,8 +38,10 @@ func NewRouter(
 	channelRepo *channels.Repo,
 	subRepo *subscriptions.Repo,
 	etRepo *eventtypes.Repo,
+	rulesRepo *tenantrules.Repo,
 	fan *fanout.Fanout,
 	deduper *dedup.Deduper,
+	reg *schema.Registry,
 ) http.Handler {
 	r := chi.NewRouter()
 	r.Use(chimw.Recoverer)
@@ -69,8 +73,8 @@ func NewRouter(
 	authMW, evictKey := middleware.NewAuth(tenantRepo)
 	admin := &adminHandler{repo: tenantRepo, evictKey: evictKey}
 
-	// Event types routes
 	et := &eventTypesHandler{repo: etRepo}
+	cr := &channelRulesHandler{repo: rulesRepo}
 
 	r.With(middleware.RequireAdminKey(cfg.AdminKey)).Route("/v1/admin", func(r chi.Router) {
 		r.Post("/tenants", admin.create)
@@ -79,6 +83,9 @@ func NewRouter(
 		r.Post("/tenants/{id}/event-types", et.register)
 		r.Get("/tenants/{id}/event-types", et.list)
 		r.Delete("/tenants/{id}/event-types/{event_type}", et.delete)
+		r.Put("/tenants/{id}/channel-rules", cr.upsert)
+		r.Get("/tenants/{id}/channel-rules", cr.list)
+		r.Delete("/tenants/{id}/channel-rules/{event_type}/{channel_type}", cr.delete)
 	})
 
 	// Tenant-authenticated routes
@@ -92,7 +99,7 @@ func NewRouter(
 			}))
 		}
 		// Event ingestion
-		ing := &ingestHandler{pool: pool, fan: fan, deduper: deduper}
+		ing := &ingestHandler{pool: pool, fan: fan, deduper: deduper, reg: reg}
 		r.Post("/events", ing.ServeHTTP)
 		r.Get("/events/{event_id}/deliveries", (&deliveriesHandler{pool: pool}).listByEvent)
 

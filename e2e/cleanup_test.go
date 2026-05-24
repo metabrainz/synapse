@@ -17,8 +17,7 @@ func TestCleanupReconcileStale(t *testing.T) {
 	e := setup(t)
 	apiKey := e.createTenant("cl1", "Cleanup")
 	e.registerEventType("cl1", "stuck.event")
-	ch := e.createWebhookChannel(apiKey, "user-1", "https://example.com/hook")
-	e.createSubscription(apiKey, "user-1", ch, "stuck.event")
+	e.setupWebhookChannel("cl1", "user-1", "stuck.event", "https://example.com/hook")
 	e.waitForCacheWarm(apiKey, "user-1", "stuck.event")
 
 	resp := e.tenantDo("POST", "/v1/events",
@@ -55,8 +54,7 @@ func TestCleanupReconcileDoesNotTouchRecentDeliveries(t *testing.T) {
 	e := setup(t)
 	apiKey := e.createTenant("cl2", "CleanupRecent")
 	e.registerEventType("cl2", "fresh.event")
-	ch := e.createWebhookChannel(apiKey, "user-1", "https://example.com/hook")
-	e.createSubscription(apiKey, "user-1", ch, "fresh.event")
+	e.setupWebhookChannel("cl2", "user-1", "fresh.event", "https://example.com/hook")
 	e.waitForCacheWarm(apiKey, "user-1", "fresh.event")
 
 	resp := e.tenantDo("POST", "/v1/events",

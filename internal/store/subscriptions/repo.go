@@ -2,6 +2,10 @@
 // A subscription with event_type = '*' matches every event for that user.
 // ListAllForCache loads the full subscription table for the in-memory fanout
 // cache; ListActiveForEvent is the live DB fallback used without the cache.
+//
+// The three-gate model requires all of: admin rule (tenant_event_channel_rules),
+// user assignment (user_tenant_channel_mapping), and user subscription
+// (user_event_subscriptions) to be enabled before a delivery is created.
 package subscriptions
 
 import (
@@ -26,7 +30,6 @@ type ActiveChannel struct {
 	ChannelID   int64
 	ChannelType string
 	Config      json.RawMessage
-	SubConfig   json.RawMessage
 }
 
 type Repo struct{ pool *pgxpool.Pool }
@@ -73,20 +76,32 @@ func (r *Repo) ListByChannel(ctx context.Context, channelID int64) ([]Subscripti
 	return out, rows.Err()
 }
 
-// ListActiveForEvent returns all active channels subscribed to the given event.
-// Matches both the specific event_type and the wildcard '*'.
+// ListActiveForEvent returns all active channels that pass all three gates for the given event.
+// Gate 1: tenant_event_channel_rules.is_allowed (admin policy)
+// Gate 2: user_tenant_channel_mapping.is_enabled (user assignment)
+// Gate 3: user_event_subscriptions.is_enabled (user subscription)
 func (r *Repo) ListActiveForEvent(ctx context.Context, tenantID, userID, eventType string) ([]ActiveChannel, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT c.id, c.type, c.config, s.config
-		 FROM subscriptions s
-		 JOIN channels c ON c.id = s.channel_id
-		 WHERE c.tenant_id = $1
-		   AND c.user_id   = $2
-		   AND c.enabled   = TRUE
-		   AND c.status    = 'active'
-		   AND s.enabled   = TRUE
-		   AND s.event_type IN ($3, '*')`,
-		tenantID, userID, eventType,
+		`SELECT uc.id, uc.channel_type, uc.config
+		 FROM tenant_event_channel_rules r
+		 JOIN user_tenant_channel_mapping utm
+		   ON utm.tenant_id    = r.tenant_id
+		  AND utm.channel_type = r.channel_type
+		  AND utm.user_id      = $1
+		 JOIN user_channels uc
+		   ON uc.id        = utm.user_channel_id
+		  AND uc.is_active  = TRUE
+		 JOIN user_event_subscriptions ues
+		   ON ues.user_id      = $1
+		  AND ues.tenant_id    = $2
+		  AND ues.event_type   = $3
+		  AND ues.channel_type = r.channel_type
+		 WHERE r.tenant_id  = $2
+		   AND r.event_type = $3
+		   AND r.is_allowed      = TRUE
+		   AND utm.is_enabled    = TRUE
+		   AND ues.is_enabled    = TRUE`,
+		userID, tenantID, eventType,
 	)
 	if err != nil {
 		return nil, err
@@ -96,7 +111,7 @@ func (r *Repo) ListActiveForEvent(ctx context.Context, tenantID, userID, eventTy
 	var out []ActiveChannel
 	for rows.Next() {
 		var ac ActiveChannel
-		if err := rows.Scan(&ac.ChannelID, &ac.ChannelType, &ac.Config, &ac.SubConfig); err != nil {
+		if err := rows.Scan(&ac.ChannelID, &ac.ChannelType, &ac.Config); err != nil {
 			return nil, err
 		}
 		out = append(out, ac)
@@ -113,13 +128,26 @@ type CacheEntry struct {
 }
 
 // ListAllForCache loads every active subscription with full routing context.
-// Used to warm the in-memory fanout cache on startup and after LISTEN/NOTIFY.
+// All three gates must be enabled: admin rule, user assignment, and user subscription.
 func (r *Repo) ListAllForCache(ctx context.Context) ([]CacheEntry, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT c.tenant_id, c.user_id, s.event_type, c.id, c.type, c.config, s.config
-		 FROM subscriptions s
-		 JOIN channels c ON c.id = s.channel_id
-		 WHERE c.enabled = TRUE AND c.status = 'active' AND s.enabled = TRUE`,
+		`SELECT utm.user_id, r.tenant_id, r.event_type,
+		        uc.id, uc.channel_type, uc.config
+		 FROM tenant_event_channel_rules r
+		 JOIN user_tenant_channel_mapping utm
+		   ON utm.tenant_id    = r.tenant_id
+		  AND utm.channel_type = r.channel_type
+		 JOIN user_channels uc
+		   ON uc.id       = utm.user_channel_id
+		  AND uc.is_active = TRUE
+		 JOIN user_event_subscriptions ues
+		   ON ues.user_id      = utm.user_id
+		  AND ues.tenant_id    = r.tenant_id
+		  AND ues.event_type   = r.event_type
+		  AND ues.channel_type = r.channel_type
+		 WHERE r.is_allowed   = TRUE
+		   AND utm.is_enabled = TRUE
+		   AND ues.is_enabled = TRUE`,
 	)
 	if err != nil {
 		return nil, err
@@ -130,8 +158,8 @@ func (r *Repo) ListAllForCache(ctx context.Context) ([]CacheEntry, error) {
 	for rows.Next() {
 		var e CacheEntry
 		if err := rows.Scan(
-			&e.TenantID, &e.UserID, &e.EventType,
-			&e.ChannelID, &e.ChannelType, &e.Config, &e.SubConfig,
+			&e.UserID, &e.TenantID, &e.EventType,
+			&e.ChannelID, &e.ChannelType, &e.Config,
 		); err != nil {
 			return nil, err
 		}

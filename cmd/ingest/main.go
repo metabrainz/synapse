@@ -13,6 +13,7 @@ import (
 	"github.com/metabrainz/synapse/internal/config"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/ingest"
+	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 )
@@ -50,7 +51,7 @@ func main() {
 	}
 
 	fan := fanout.New(cache, adapter.MaxAttemptsFor)
-	consumer := ingest.NewConsumer(pool, fan)
+	consumer := ingest.NewConsumer(pool, fan, schema.New(schema.KnownTenants))
 
 	slog.Info("ingest: starting", "workers", cfg.Ingest.Workers, "batch_size", cfg.Ingest.BatchSize, "drain_ms", cfg.Ingest.DrainMs)
 

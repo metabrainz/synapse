@@ -18,10 +18,12 @@ import (
 	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/ratelimit"
+	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/channels"
 	"github.com/metabrainz/synapse/internal/store/eventtypes"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
+	"github.com/metabrainz/synapse/internal/store/tenantrules"
 	"github.com/metabrainz/synapse/internal/store/tenants"
 )
 
@@ -56,6 +58,9 @@ func main() {
 	channelRepo := channels.New(pool)
 	subRepo := subscriptions.New(pool)
 	etRepo := eventtypes.New(pool)
+	rulesRepo := tenantrules.New(pool)
+
+	reg := schema.New(schema.KnownTenants)
 
 	cache := fanout.NewCache(pool, subRepo, cfg.Postgres.DirectDSN)
 	if err := cache.Start(ctx); err != nil {
@@ -84,8 +89,10 @@ func main() {
 		channelRepo,
 		subRepo,
 		etRepo,
+		rulesRepo,
 		fan,
 		deduper,
+		reg,
 	)
 
 	srv := &http.Server{

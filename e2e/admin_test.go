@@ -103,6 +103,58 @@ func TestEventTypeCRUD(t *testing.T) {
 	}
 }
 
+func TestChannelRulesCRUD(t *testing.T) {
+	e := setup(t)
+	e.createTenant("cr1", "ChannelRules")
+
+	// Upsert a rule.
+	e.registerChannelRule("cr1", "listen", "webhook")
+
+	// List — rule present and allowed.
+	resp := e.adminDo("GET", "/v1/admin/tenants/cr1/channel-rules", nil)
+	var rules []map[string]any
+	decodeJSON(t, resp, &rules)
+	if len(rules) != 1 {
+		t.Fatalf("list: want 1 rule, got %d", len(rules))
+	}
+	if rules[0]["event_type"] != "listen" || rules[0]["channel_type"] != "webhook" {
+		t.Fatalf("unexpected rule: %v", rules[0])
+	}
+	if rules[0]["is_allowed"] != true {
+		t.Fatalf("want is_allowed=true, got %v", rules[0]["is_allowed"])
+	}
+
+	// Upsert same rule with is_allowed=false (disable).
+	resp2 := e.adminDo("PUT", "/v1/admin/tenants/cr1/channel-rules",
+		map[string]any{"event_type": "listen", "channel_type": "webhook", "is_allowed": false},
+	)
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusNoContent {
+		t.Fatalf("disable: want 204, got %d", resp2.StatusCode)
+	}
+
+	resp3 := e.adminDo("GET", "/v1/admin/tenants/cr1/channel-rules", nil)
+	var updated []map[string]any
+	decodeJSON(t, resp3, &updated)
+	if updated[0]["is_allowed"] != false {
+		t.Fatalf("after disable: want is_allowed=false, got %v", updated[0]["is_allowed"])
+	}
+
+	// Delete the rule.
+	resp4 := e.adminDo("DELETE", "/v1/admin/tenants/cr1/channel-rules/listen/webhook", nil)
+	defer resp4.Body.Close()
+	if resp4.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete: want 204, got %d", resp4.StatusCode)
+	}
+
+	resp5 := e.adminDo("GET", "/v1/admin/tenants/cr1/channel-rules", nil)
+	var empty []map[string]any
+	decodeJSON(t, resp5, &empty)
+	if len(empty) != 0 {
+		t.Fatalf("after delete: want 0 rules, got %d", len(empty))
+	}
+}
+
 func TestAdminKeyRequired(t *testing.T) {
 	e := setup(t)
 

@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/events"
 	"golang.org/x/sync/errgroup"
@@ -33,10 +34,11 @@ type Message struct {
 type Consumer struct {
 	pool *pgxpool.Pool
 	fan  *fanout.Fanout
+	reg  *schema.Registry
 }
 
-func NewConsumer(pool *pgxpool.Pool, fan *fanout.Fanout) *Consumer {
-	return &Consumer{pool: pool, fan: fan}
+func NewConsumer(pool *pgxpool.Pool, fan *fanout.Fanout, reg *schema.Registry) *Consumer {
+	return &Consumer{pool: pool, fan: fan, reg: reg}
 }
 
 // Run starts workers goroutines, each collecting up to batchSize messages per
@@ -59,9 +61,9 @@ func (c *Consumer) Run(ctx context.Context, amqpURL string, workers, batchSize, 
 	return g.Wait()
 }
 
-// parseMessages decodes and validates raw AMQP bodies, dropping malformed or
-// incomplete messages with a log line. All valid events share the same timestamp.
-func parseMessages(bodies [][]byte, now time.Time) []events.Event {
+// parseMessages decodes, field-validates, and schema-validates raw AMQP bodies,
+// dropping invalid messages with a log line. All valid events share the same timestamp.
+func parseMessages(bodies [][]byte, now time.Time, reg *schema.Registry) []events.Event {
 	evs := make([]events.Event, 0, len(bodies))
 	for _, body := range bodies {
 		var msg Message
@@ -75,6 +77,11 @@ func parseMessages(bodies [][]byte, now time.Time) []events.Event {
 		}
 		if msg.Payload == nil {
 			msg.Payload = json.RawMessage(`{}`)
+		}
+		if err := reg.Validate(msg.TenantID, msg.EventType, msg.Payload); err != nil {
+			slog.Error("ingest: payload schema validation failed, dropping",
+				"tenant", msg.TenantID, "event_type", msg.EventType, "err", err)
+			continue
 		}
 		evs = append(evs, events.Event{
 			TenantID:       msg.TenantID,
@@ -100,7 +107,7 @@ func parseMessages(bodies [][]byte, now time.Time) []events.Event {
 // event type) trigger per-event fallback processing instead of nacking — they
 // signal bad data that will not fix itself on retry.
 func (c *Consumer) handleBatch(ctx context.Context, bodies [][]byte) error {
-	evs := parseMessages(bodies, time.Now())
+	evs := parseMessages(bodies, time.Now(), c.reg)
 	if len(evs) == 0 {
 		return nil
 	}

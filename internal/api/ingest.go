@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/metabrainz/synapse/internal/api/middleware"
 	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/events"
 )
@@ -17,6 +19,7 @@ type ingestHandler struct {
 	pool    *pgxpool.Pool
 	fan     *fanout.Fanout
 	deduper *dedup.Deduper
+	reg     *schema.Registry
 }
 
 type ingestRequest struct {
@@ -45,6 +48,12 @@ func (h *ingestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Payload == nil {
 		req.Payload = json.RawMessage(`{}`)
+	}
+
+	// Validate payload against the registered schema for this (tenant, event_type).
+	if err := h.reg.Validate(tenant.ID, req.EventType, req.Payload); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("payload validation failed: %s", err))
+		return
 	}
 
 	ctx := r.Context()

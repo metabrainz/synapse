@@ -37,8 +37,8 @@ func TestIngestRequiresAuth(t *testing.T) {
 
 func TestIngestMissingFields(t *testing.T) {
 	e := setup(t)
-	apiKey := e.createTenant("v1", "Validation")
-	e.registerEventType("v1", "ping")
+	apiKey := e.createTenant("val1", "Validation")
+	e.registerEventType("val1", "ping")
 
 	cases := []struct {
 		name string
@@ -60,7 +60,7 @@ func TestIngestMissingFields(t *testing.T) {
 
 func TestIngestUnregisteredEventType(t *testing.T) {
 	e := setup(t)
-	apiKey := e.createTenant("v2", "Validation2")
+	apiKey := e.createTenant("val2", "Validation2")
 	// Intentionally skip registerEventType.
 
 	resp := e.tenantDo("POST", "/v1/events",
@@ -108,8 +108,7 @@ func TestIngestCreatesDeliveryAndOutboxRows(t *testing.T) {
 	e := setup(t)
 	apiKey := e.createTenant("lb", "ListenBrainz")
 	e.registerEventType("lb", "listen")
-	ch := e.createWebhookChannel(apiKey, "user-1", "https://example.com/hook")
-	e.createSubscription(apiKey, "user-1", ch, "listen")
+	e.setupWebhookChannel("lb", "user-1", "listen", "https://example.com/hook")
 	e.waitForCacheWarm(apiKey, "user-1", "listen")
 
 	resp := e.tenantDo("POST", "/v1/events",
@@ -142,45 +141,20 @@ func TestIngestCreatesDeliveryAndOutboxRows(t *testing.T) {
 	}
 }
 
-func TestIngestWildcardSubscription(t *testing.T) {
-	e := setup(t)
-	apiKey := e.createTenant("wc1", "WildCard")
-	e.registerEventType("wc1", "a.created")
-	e.registerEventType("wc1", "b.updated")
-
-	ch := e.createWebhookChannel(apiKey, "user-1", "https://example.com/wh")
-	e.createSubscription(apiKey, "user-1", ch, "*")
-	e.waitForCacheWarm(apiKey, "user-1", "a.created")
-
-	// Both event types should match the wildcard subscription.
-	for _, et := range []string{"a.created", "b.updated"} {
-		resp := e.tenantDo("POST", "/v1/events",
-			map[string]any{"user_id": "user-1", "event_type": et, "payload": map[string]string{}},
-			apiKey,
-		)
-		var out map[string]any
-		decodeJSON(t, resp, &out)
-		if out["delivery_count"].(float64) != 1 {
-			t.Fatalf("%s: want delivery_count=1, got %v", et, out["delivery_count"])
-		}
-	}
-}
-
 // ── Idempotency ───────────────────────────────────────────────────────────────
 
 func TestIngestIdempotency(t *testing.T) {
 	e := setup(t)
 	apiKey := e.createTenant("mb", "MusicBrainz")
 	e.registerEventType("mb", "edit.created")
-	ch := e.createWebhookChannel(apiKey, "user-1", "https://example.com/hook")
-	e.createSubscription(apiKey, "user-1", ch, "edit.created")
+	e.setupWebhookChannel("mb", "user-1", "edit.created", "https://example.com/hook")
 	e.waitForCacheWarm(apiKey, "user-1", "edit.created")
 
 	payload := map[string]any{
 		"user_id":         "user-1",
 		"event_type":      "edit.created",
 		"payload":         map[string]string{"edit_id": "42"},
-		"idempotency_key": "edit-42-v1",
+		"idempotency_key": "edit-42-key",
 	}
 
 	resp1 := e.tenantDo("POST", "/v1/events", payload, apiKey)
@@ -213,8 +187,7 @@ func TestIngestDryRun(t *testing.T) {
 	e := setup(t)
 	apiKey := e.createTenant("bb", "BookBrainz")
 	e.registerEventType("bb", "review.created")
-	ch := e.createWebhookChannel(apiKey, "user-1", "https://example.com/hook")
-	e.createSubscription(apiKey, "user-1", ch, "review.created")
+	e.setupWebhookChannel("bb", "user-1", "review.created", "https://example.com/hook")
 	e.waitForCacheWarm(apiKey, "user-1", "review.created")
 
 	resp := e.tenantDo("POST", "/v1/events?dry_run=true",

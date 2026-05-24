@@ -31,7 +31,6 @@ type WorkerMessage struct {
 	ChannelID     int64           `json:"channel_id"`
 	ChannelType   string          `json:"channel_type"`
 	ChannelConfig json.RawMessage `json:"channel_config"`
-	SubConfig     json.RawMessage `json:"sub_config"`
 	EventID       int64           `json:"event_id"`
 	EventType     string          `json:"event_type"`
 	TenantID      string          `json:"tenant_id"`
@@ -51,7 +50,6 @@ func newWorkerMessage(deliveryID int64, ev events.Event, ch subscriptions.Active
 		ChannelID:     ch.ChannelID,
 		ChannelType:   ch.ChannelType,
 		ChannelConfig: ch.Config,
-		SubConfig:     ch.SubConfig,
 		EventID:       ev.ID,
 		EventType:     ev.EventType,
 		TenantID:      ev.TenantID,

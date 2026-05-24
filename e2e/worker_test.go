@@ -57,8 +57,7 @@ func TestWorkerSuccess(t *testing.T) {
 	e := setup(t)
 	apiKey := e.createTenant("wk1", "WorkerSuccess")
 	e.registerEventType("wk1", "job.done")
-	ch := e.createWebhookChannel(apiKey, "user-1", "https://example.com/hook")
-	e.createSubscription(apiKey, "user-1", ch, "job.done")
+	e.setupWebhookChannel("wk1", "user-1", "job.done", "https://example.com/hook")
 	e.waitForCacheWarm(apiKey, "user-1", "job.done")
 
 	resp := e.tenantDo("POST", "/v1/events",
@@ -84,8 +83,7 @@ func TestWorkerRetryOnFailure(t *testing.T) {
 	e := setup(t)
 	apiKey := e.createTenant("wk2", "WorkerRetry")
 	e.registerEventType("wk2", "task.run")
-	ch := e.createWebhookChannel(apiKey, "user-1", "https://example.com/hook")
-	e.createSubscription(apiKey, "user-1", ch, "task.run")
+	e.setupWebhookChannel("wk2", "user-1", "task.run", "https://example.com/hook")
 	e.waitForCacheWarm(apiKey, "user-1", "task.run")
 
 	resp := e.tenantDo("POST", "/v1/events",
@@ -112,8 +110,7 @@ func TestWorkerDedup(t *testing.T) {
 	e := setup(t)
 	apiKey := e.createTenant("wk3", "WorkerDedup")
 	e.registerEventType("wk3", "dedup.event")
-	ch := e.createWebhookChannel(apiKey, "user-1", "https://example.com/hook")
-	e.createSubscription(apiKey, "user-1", ch, "dedup.event")
+	e.setupWebhookChannel("wk3", "user-1", "dedup.event", "https://example.com/hook")
 	e.waitForCacheWarm(apiKey, "user-1", "dedup.event")
 
 	e.tenantDo("POST", "/v1/events",
@@ -155,8 +152,7 @@ func TestWorkerMessageFields(t *testing.T) {
 	e := setup(t)
 	apiKey := e.createTenant("wk4", "WorkerFields")
 	e.registerEventType("wk4", "check.fields")
-	ch := e.createWebhookChannel(apiKey, "user-1", "https://example.com/hook")
-	e.createSubscription(apiKey, "user-1", ch, "check.fields")
+	e.setupWebhookChannel("wk4", "user-1", "check.fields", "https://example.com/hook")
 	e.waitForCacheWarm(apiKey, "user-1", "check.fields")
 
 	payload := map[string]string{"track": "Karma Police"}

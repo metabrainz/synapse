@@ -11,8 +11,7 @@ func TestDeliveriesListByEvent(t *testing.T) {
 	e := setup(t)
 	apiKey := e.createTenant("del1", "DeliveryList")
 	e.registerEventType("del1", "item.created")
-	ch := e.createWebhookChannel(apiKey, "user-1", "https://example.com/hook")
-	e.createSubscription(apiKey, "user-1", ch, "item.created")
+	e.setupWebhookChannel("del1", "user-1", "item.created", "https://example.com/hook")
 	e.waitForCacheWarm(apiKey, "user-1", "item.created")
 
 	resp := e.tenantDo("POST", "/v1/events",

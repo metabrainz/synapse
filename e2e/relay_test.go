@@ -12,8 +12,7 @@ func TestRelayPublishesAndClearsOutbox(t *testing.T) {
 	e := setup(t)
 	apiKey := e.createTenant("rel1", "RelayTest")
 	e.registerEventType("rel1", "order.placed")
-	ch := e.createWebhookChannel(apiKey, "user-1", "https://example.com/hook")
-	e.createSubscription(apiKey, "user-1", ch, "order.placed")
+	e.setupWebhookChannel("rel1", "user-1", "order.placed", "https://example.com/hook")
 	e.waitForCacheWarm(apiKey, "user-1", "order.placed")
 
 	e.tenantDo("POST", "/v1/events",
@@ -58,11 +57,9 @@ func TestRelayMultipleSubscribers(t *testing.T) {
 	apiKey := e.createTenant("rel2", "RelayMulti")
 	e.registerEventType("rel2", "ping")
 
-	// Two subscribers for the same event.
-	ch1 := e.createWebhookChannel(apiKey, "user-1", "https://example.com/h1")
-	ch2 := e.createWebhookChannel(apiKey, "user-2", "https://example.com/h2")
-	e.createSubscription(apiKey, "user-1", ch1, "ping")
-	e.createSubscription(apiKey, "user-2", ch2, "ping")
+	// Two users subscribed to the same event type.
+	e.setupWebhookChannel("rel2", "user-1", "ping", "https://example.com/h1")
+	e.setupWebhookChannel("rel2", "user-2", "ping", "https://example.com/h2")
 	e.waitForCacheWarm(apiKey, "user-1", "ping")
 	e.waitForCacheWarm(apiKey, "user-2", "ping")
 

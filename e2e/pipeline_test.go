@@ -13,6 +13,7 @@ import (
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/ingest"
+	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store/deliveries"
 	"github.com/metabrainz/synapse/internal/store/outbox"
 )
@@ -25,7 +26,7 @@ func (e *env) startIngestConsumer() context.CancelFunc {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		c := ingest.NewConsumer(e.pool, e.fan)
+		c := ingest.NewConsumer(e.pool, e.fan, schema.New(schema.KnownTenants))
 		c.Run(ctx, e.amqpURL, 1, 10, 50)
 	}()
 	e.t.Cleanup(func() { cancel(); <-done })
@@ -67,8 +68,7 @@ func TestPipelineHTTPIngest(t *testing.T) {
 	e := setup(t)
 	apiKey := e.createTenant("pipe1", "Pipeline")
 	e.registerEventType("pipe1", "play.track")
-	ch := e.createWebhookChannel(apiKey, "user-1", "https://example.com/hook")
-	e.createSubscription(apiKey, "user-1", ch, "play.track")
+	e.setupWebhookChannel("pipe1", "user-1", "play.track", "https://example.com/hook")
 	e.waitForCacheWarm(apiKey, "user-1", "play.track")
 
 	resp := e.tenantDo("POST", "/v1/events",
@@ -124,8 +124,7 @@ func TestPipelineAMQPIngest(t *testing.T) {
 	e := setup(t)
 	apiKey := e.createTenant("pipe2", "PipelineAMQP")
 	e.registerEventType("pipe2", "submit.edit")
-	ch := e.createWebhookChannel(apiKey, "user-1", "https://example.com/hook")
-	e.createSubscription(apiKey, "user-1", ch, "submit.edit")
+	e.setupWebhookChannel("pipe2", "user-1", "submit.edit", "https://example.com/hook")
 	e.waitForCacheWarm(apiKey, "user-1", "submit.edit")
 
 	e.startIngestConsumer()
