@@ -25,12 +25,12 @@ type Event struct {
 }
 
 // Insert writes an event inside a transaction. Always called via store.WithTx.
-func Insert(ctx context.Context, q store.Querier, e Event) (int64, error) {
+func Insert(ctx context.Context, q store.Querier, event Event) (int64, error) {
 	var id int64
 	err := q.QueryRow(ctx,
 		`INSERT INTO events (tenant_id, user_id, event_type, payload, idempotency_key)
 		 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		e.TenantID, e.UserID, e.EventType, e.Payload, e.IdempotencyKey,
+		event.TenantID, event.UserID, event.EventType, event.Payload, event.IdempotencyKey,
 	).Scan(&id)
 	return id, err
 }
@@ -47,12 +47,12 @@ func InsertBatch(ctx context.Context, q store.Querier, evs []Event) ([]int64, er
 	payloads := make([]string, n)
 	ikeys := make([]*string, n)
 
-	for i, e := range evs {
-		tenantIDs[i] = e.TenantID
-		userIDs[i] = e.UserID
-		eventTypes[i] = e.EventType
-		payloads[i] = string(e.Payload)
-		ikeys[i] = e.IdempotencyKey
+	for i, event := range evs {
+		tenantIDs[i] = event.TenantID
+		userIDs[i] = event.UserID
+		eventTypes[i] = event.EventType
+		payloads[i] = string(event.Payload)
+		ikeys[i] = event.IdempotencyKey
 	}
 
 	rows, err := q.Query(ctx,
@@ -79,13 +79,13 @@ func InsertBatch(ctx context.Context, q store.Querier, evs []Event) ([]int64, er
 }
 
 func GetByID(ctx context.Context, q store.Querier, id int64) (*Event, error) {
-	var e Event
+	var event Event
 	err := q.QueryRow(ctx,
 		`SELECT id, tenant_id, user_id, event_type, payload, idempotency_key, created_at
 		 FROM events WHERE id = $1`, id,
-	).Scan(&e.ID, &e.TenantID, &e.UserID, &e.EventType, &e.Payload, &e.IdempotencyKey, &e.CreatedAt)
+	).Scan(&event.ID, &event.TenantID, &event.UserID, &event.EventType, &event.Payload, &event.IdempotencyKey, &event.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
-	return &e, err
+	return &event, err
 }

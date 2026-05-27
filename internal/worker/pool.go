@@ -40,8 +40,8 @@ func Run(
 			}
 			defer consumer.Close()
 
-			h := Handler(channelType, ad, consumer, deduper, pool)
-			return consumer.Run(gctx, h)
+			handler := Handler(channelType, ad, consumer, deduper, pool)
+			return consumer.Run(gctx, handler)
 		})
 	}
 

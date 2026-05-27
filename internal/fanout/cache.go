@@ -86,18 +86,18 @@ func (c *Cache) rebuild(ctx context.Context) error {
 	exact := make(map[string][]subscriptions.ActiveChannel, len(entries))
 	wildcard := make(map[string][]subscriptions.ActiveChannel)
 
-	for _, e := range entries {
+	for _, entry := range entries {
 		// Gate 1: skip channel types not allowed by the static registry.
-		if !c.reg.IsAllowed(e.TenantID, e.EventType, e.ChannelType) {
+		if !c.reg.IsAllowed(entry.TenantID, entry.EventType, entry.ChannelType) {
 			continue
 		}
-		ac := e.ActiveChannel
-		if e.EventType == "*" {
-			key := e.TenantID + ":" + e.UserID
-			wildcard[key] = append(wildcard[key], ac)
+		activeChannel := entry.ActiveChannel
+		if entry.EventType == "*" {
+			key := entry.TenantID + ":" + entry.UserID
+			wildcard[key] = append(wildcard[key], activeChannel)
 		} else {
-			key := e.TenantID + ":" + e.UserID + ":" + e.EventType
-			exact[key] = append(exact[key], ac)
+			key := entry.TenantID + ":" + entry.UserID + ":" + entry.EventType
+			exact[key] = append(exact[key], activeChannel)
 		}
 	}
 

@@ -21,17 +21,17 @@ type Consumer struct {
 	channelType string
 	prefetch    int
 
-	mu   sync.Mutex
-	conn *amqp.Connection
-	ch   *amqp.Channel
+	mu          sync.Mutex
+	conn        *amqp.Connection
+	amqpChannel *amqp.Channel
 }
 
 func NewConsumer(url, channelType string, prefetch int) (*Consumer, error) {
-	c := &Consumer{url: url, channelType: channelType, prefetch: prefetch}
-	if err := c.connect(); err != nil {
+	consumer := &Consumer{url: url, channelType: channelType, prefetch: prefetch}
+	if err := consumer.connect(); err != nil {
 		return nil, err
 	}
-	return c, nil
+	return consumer, nil
 }
 
 func (c *Consumer) connect() error {
@@ -39,17 +39,17 @@ func (c *Consumer) connect() error {
 	if err != nil {
 		return fmt.Errorf("amqp dial: %w", err)
 	}
-	ch, err := conn.Channel()
+	amqpChannel, err := conn.Channel()
 	if err != nil {
 		conn.Close()
 		return fmt.Errorf("amqp channel: %w", err)
 	}
-	if err := ch.Qos(c.prefetch, 0, false); err != nil {
+	if err := amqpChannel.Qos(c.prefetch, 0, false); err != nil {
 		conn.Close()
 		return fmt.Errorf("set qos: %w", err)
 	}
 	c.conn = conn
-	c.ch = ch
+	c.amqpChannel = amqpChannel
 	return nil
 }
 
@@ -58,7 +58,7 @@ func (c *Consumer) connect() error {
 // application-level semaphore needed.
 func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 	queue := "deliveries." + c.channelType
-	msgs, err := c.ch.Consume(queue, "", false, false, false, false, nil)
+	msgs, err := c.amqpChannel.Consume(queue, "", false, false, false, false, nil)
 	if err != nil {
 		return fmt.Errorf("consume %s: %w", queue, err)
 	}
@@ -85,7 +85,7 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 func (c *Consumer) PublishRetry(ctx context.Context, channelType string, body []byte, ttlMs int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.ch.PublishWithContext(ctx, exchangeRetry, channelType, false, false, amqp.Publishing{
+	return c.amqpChannel.PublishWithContext(ctx, exchangeRetry, channelType, false, false, amqp.Publishing{
 		ContentType:  "application/json",
 		Body:         body,
 		DeliveryMode: amqp.Persistent,
@@ -118,17 +118,17 @@ func ConsumeBatchQueue(ctx context.Context, url, queue string, batchSize, drainM
 	}
 	defer conn.Close()
 
-	channel, err := conn.Channel()
+	amqpChannel, err := conn.Channel()
 	if err != nil {
 		return fmt.Errorf("amqp channel: %w", err)
 	}
-	defer channel.Close()
+	defer amqpChannel.Close()
 
-	if err := channel.Qos(batchSize, 0, false); err != nil {
+	if err := amqpChannel.Qos(batchSize, 0, false); err != nil {
 		return fmt.Errorf("set qos: %w", err)
 	}
 
-	messages, err := channel.Consume(queue, "", false, false, false, false, nil)
+	messages, err := amqpChannel.Consume(queue, "", false, false, false, false, nil)
 	if err != nil {
 		return fmt.Errorf("consume %s: %w", queue, err)
 	}
@@ -165,8 +165,8 @@ func ConsumeBatchQueue(ctx context.Context, url, queue string, batchSize, drainM
 				break collect
 			case <-ctx.Done():
 				timer.Stop()
-				for _, m := range batch {
-					m.Nack(false, true)
+				for _, delivery := range batch {
+					delivery.Nack(false, true)
 				}
 				return ctx.Err()
 			}
@@ -178,16 +178,13 @@ func ConsumeBatchQueue(ctx context.Context, url, queue string, batchSize, drainM
 			batchBodies[i] = message.Body
 		}
 
-		// Process the batch end-to-end inside a single transaction.
 		if err := handler(ctx, batchBodies); err != nil {
-			// Nack all messages in the batch.
-			for _, message := range batch {
-				message.Nack(false, true)
+			for _, delivery := range batch {
+				delivery.Nack(false, true)
 			}
 		} else {
-			// Ack all messages in the batch.
-			for _, message := range batch {
-				message.Ack(false)
+			for _, delivery := range batch {
+				delivery.Ack(false)
 			}
 		}
 	}

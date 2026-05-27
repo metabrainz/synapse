@@ -1,11 +1,4 @@
 BEGIN;
-
-DROP TABLE outbox;
-DROP TABLE deliveries;
-DROP TABLE events;
-DROP TABLE subscriptions;
-DROP TABLE channels;
-DROP TABLE event_type_definitions;
-DROP TABLE tenants;
-
+DROP TABLE IF EXISTS outbox, deliveries, events, user_event_subscriptions, user_tenant_channel_mapping, user_channels, users CASCADE;
+DROP EXTENSION IF EXISTS pgcrypto;
 COMMIT;

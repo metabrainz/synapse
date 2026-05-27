@@ -65,12 +65,12 @@ func (r *Repo) ListByUser(ctx context.Context, userID, tenantID string) ([]Mappi
 	defer rows.Close()
 	var out []Mapping
 	for rows.Next() {
-		var m Mapping
-		if err := rows.Scan(&m.UserID, &m.TenantID, &m.ChannelType,
-			&m.UserChannelID, &m.IsEnabled); err != nil {
+		var mapping Mapping
+		if err := rows.Scan(&mapping.UserID, &mapping.TenantID, &mapping.ChannelType,
+			&mapping.UserChannelID, &mapping.IsEnabled); err != nil {
 			return nil, err
 		}
-		out = append(out, m)
+		out = append(out, mapping)
 	}
 	return out, rows.Err()
 }

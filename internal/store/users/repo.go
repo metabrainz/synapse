@@ -24,7 +24,3 @@ func (r *Repo) Upsert(ctx context.Context, id string) error {
 	return err
 }
 
-// TODO: implement Delete(ctx, id) — called when MetaBrainz notifies Synapse of account deletion.
-// Should cascade-delete user_channels, user_tenant_channel_mapping, and user_event_subscriptions
-// via ON DELETE CASCADE (already set in migrations). A DELETE /v1/users/{id} admin endpoint
-// should call this.

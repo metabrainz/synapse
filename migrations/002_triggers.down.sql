@@ -1,0 +1,3 @@
+BEGIN;
+DROP FUNCTION IF EXISTS notify_subscription_change CASCADE;
+COMMIT;

@@ -69,8 +69,8 @@ func (r *Relay) tick(ctx context.Context) error {
 	}
 
 	batch := make([]broker.BatchMsg, len(msgs))
-	for i, m := range msgs {
-		batch[i] = broker.BatchMsg{ID: m.ID, RoutingKey: m.RoutingKey, Body: m.Payload}
+	for i, msg := range msgs {
+		batch[i] = broker.BatchMsg{ID: msg.ID, RoutingKey: msg.RoutingKey, Body: msg.Payload}
 	}
 	pubCtx, cancel := context.WithTimeout(ctx, publishTimeout)
 	confirmed, err := r.pub.PublishBatch(pubCtx, batch)

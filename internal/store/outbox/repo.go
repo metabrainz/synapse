@@ -37,8 +37,8 @@ func Insert(ctx context.Context, q store.Querier, routingKey string, payload jso
 // before COMMIT leaves no partial state for the relay to act on.
 func InsertBatch(ctx context.Context, q store.Querier, routingKeys []string, payloads []json.RawMessage) error {
 	strs := make([]string, len(payloads))
-	for i, p := range payloads {
-		strs[i] = string(p)
+	for i, payload := range payloads {
+		strs[i] = string(payload)
 	}
 	_, err := q.Exec(ctx,
 		`INSERT INTO outbox (routing_key, payload)
@@ -73,11 +73,11 @@ func ClaimBatch(ctx context.Context, pool *pgxpool.Pool, workerID string, limit 
 
 	var out []Message
 	for rows.Next() {
-		var m Message
-		if err := rows.Scan(&m.ID, &m.RoutingKey, &m.Payload, &m.CreatedAt); err != nil {
+		var msg Message
+		if err := rows.Scan(&msg.ID, &msg.RoutingKey, &msg.Payload, &msg.CreatedAt); err != nil {
 			return nil, err
 		}
-		out = append(out, m)
+		out = append(out, msg)
 	}
 	return out, rows.Err()
 }
@@ -110,11 +110,11 @@ func FetchPending(ctx context.Context, q store.Querier, limit int) ([]Message, e
 
 	var out []Message
 	for rows.Next() {
-		var m Message
-		if err := rows.Scan(&m.ID, &m.RoutingKey, &m.Payload, &m.CreatedAt); err != nil {
+		var msg Message
+		if err := rows.Scan(&msg.ID, &msg.RoutingKey, &msg.Payload, &msg.CreatedAt); err != nil {
 			return nil, err
 		}
-		out = append(out, m)
+		out = append(out, msg)
 	}
 	return out, rows.Err()
 }

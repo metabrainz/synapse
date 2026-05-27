@@ -63,12 +63,12 @@ func (r *Repo) ListByUserTenant(ctx context.Context, userID, tenantID string) ([
 	defer rows.Close()
 	var out []Subscription
 	for rows.Next() {
-		var s Subscription
-		if err := rows.Scan(&s.UserID, &s.TenantID, &s.EventType, &s.ChannelType,
-			&s.IsEnabled, &s.CreatedAt); err != nil {
+		var sub Subscription
+		if err := rows.Scan(&sub.UserID, &sub.TenantID, &sub.EventType, &sub.ChannelType,
+			&sub.IsEnabled, &sub.CreatedAt); err != nil {
 			return nil, err
 		}
-		out = append(out, s)
+		out = append(out, sub)
 	}
 	return out, rows.Err()
 }

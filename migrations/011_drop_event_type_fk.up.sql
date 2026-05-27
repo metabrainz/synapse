@@ -1,3 +1,0 @@
-BEGIN;
-ALTER TABLE events DROP CONSTRAINT IF EXISTS fk_event_type;
-COMMIT;

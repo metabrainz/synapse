@@ -37,18 +37,18 @@ type Delivery struct {
 // are positionally aligned with the input slice — callers can zip ds[i] with
 // ids[i] to embed the database-assigned ID into outbox payloads immediately
 // after this call, without a second query.
-func InsertBatch(ctx context.Context, q store.Querier, ds []Delivery) ([]int64, error) {
-	n := len(ds)
+func InsertBatch(ctx context.Context, q store.Querier, batch []Delivery) ([]int64, error) {
+	n := len(batch)
 	eventIDs := make([]int64, n)
 	channelIDs := make([]int64, n)
 	channelTypes := make([]string, n)
 	maxAttempts := make([]int32, n)
 
-	for i, d := range ds {
-		eventIDs[i] = d.EventID
-		channelIDs[i] = d.ChannelID
-		channelTypes[i] = d.ChannelType
-		maxAttempts[i] = int32(d.MaxAttempts)
+	for i, delivery := range batch {
+		eventIDs[i] = delivery.EventID
+		channelIDs[i] = delivery.ChannelID
+		channelTypes[i] = delivery.ChannelType
+		maxAttempts[i] = int32(delivery.MaxAttempts)
 	}
 
 	rows, err := q.Query(ctx,
@@ -101,32 +101,32 @@ func ListByEvent(ctx context.Context, q store.Querier, eventID int64) ([]Deliver
 
 	var out []Delivery
 	for rows.Next() {
-		var d Delivery
+		var delivery Delivery
 		if err := rows.Scan(
-			&d.ID, &d.EventID, &d.ChannelID, &d.ChannelType, &d.Status,
-			&d.Attempt, &d.MaxAttempts, &d.LastError, &d.DeliveredAt,
-			&d.CreatedAt, &d.UpdatedAt,
+			&delivery.ID, &delivery.EventID, &delivery.ChannelID, &delivery.ChannelType, &delivery.Status,
+			&delivery.Attempt, &delivery.MaxAttempts, &delivery.LastError, &delivery.DeliveredAt,
+			&delivery.CreatedAt, &delivery.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
-		out = append(out, d)
+		out = append(out, delivery)
 	}
 	return out, rows.Err()
 }
 
 func GetByID(ctx context.Context, q store.Querier, id int64) (*Delivery, error) {
-	var d Delivery
+	var delivery Delivery
 	err := q.QueryRow(ctx,
 		`SELECT id, event_id, channel_id, channel_type, status, attempt,
 		        max_attempts, last_error, delivered_at, created_at, updated_at
 		 FROM deliveries WHERE id = $1`, id,
 	).Scan(
-		&d.ID, &d.EventID, &d.ChannelID, &d.ChannelType, &d.Status,
-		&d.Attempt, &d.MaxAttempts, &d.LastError, &d.DeliveredAt,
-		&d.CreatedAt, &d.UpdatedAt,
+		&delivery.ID, &delivery.EventID, &delivery.ChannelID, &delivery.ChannelType, &delivery.Status,
+		&delivery.Attempt, &delivery.MaxAttempts, &delivery.LastError, &delivery.DeliveredAt,
+		&delivery.CreatedAt, &delivery.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
-	return &d, err
+	return &delivery, err
 }

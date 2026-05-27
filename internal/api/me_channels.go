@@ -17,7 +17,6 @@ func (h *meHandler) listChannels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// List the user's channels
 	chans, err := h.channels.ListByUser(r.Context(), uid)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list channels failed")
@@ -73,7 +72,6 @@ func (h *meHandler) deleteChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate the channel ID
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid channel id")

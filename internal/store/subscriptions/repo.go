@@ -27,20 +27,20 @@ func New(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
 // Gate 1 (tenant channel rules) is applied in the fanout layer via the static registry.
 func (r *Repo) ListActiveForEvent(ctx context.Context, tenantID, userID, eventType string) ([]ActiveChannel, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT uc.id, uc.channel_type, uc.config
-		 FROM user_tenant_channel_mapping utm
-		 JOIN user_channels uc
-		   ON uc.id       = utm.user_channel_id
-		  AND uc.is_active = TRUE
-		 JOIN user_event_subscriptions ues
-		   ON ues.user_id      = utm.user_id
-		  AND ues.tenant_id    = utm.tenant_id
-		  AND ues.event_type   = $3
-		  AND ues.channel_type = utm.channel_type
-		 WHERE utm.user_id    = $1
-		   AND utm.tenant_id  = $2
-		   AND utm.is_enabled = TRUE
-		   AND ues.is_enabled = TRUE`,
+		`SELECT channel.id, channel.channel_type, channel.config
+		 FROM user_tenant_channel_mapping channel_mapping
+		 JOIN user_channels channel
+		   ON channel.id        = channel_mapping.user_channel_id
+		  AND channel.is_active = TRUE
+		 JOIN user_event_subscriptions event_sub
+		   ON event_sub.user_id      = channel_mapping.user_id
+		  AND event_sub.tenant_id    = channel_mapping.tenant_id
+		  AND event_sub.event_type   = $3
+		  AND event_sub.channel_type = channel_mapping.channel_type
+		 WHERE channel_mapping.user_id   = $1
+		   AND channel_mapping.tenant_id = $2
+		   AND channel_mapping.is_enabled = TRUE
+		   AND event_sub.is_enabled = TRUE`,
 		userID, tenantID, eventType,
 	)
 	if err != nil {
@@ -50,11 +50,11 @@ func (r *Repo) ListActiveForEvent(ctx context.Context, tenantID, userID, eventTy
 
 	var out []ActiveChannel
 	for rows.Next() {
-		var ac ActiveChannel
-		if err := rows.Scan(&ac.ChannelID, &ac.ChannelType, &ac.Config); err != nil {
+		var channel ActiveChannel
+		if err := rows.Scan(&channel.ChannelID, &channel.ChannelType, &channel.Config); err != nil {
 			return nil, err
 		}
-		out = append(out, ac)
+		out = append(out, channel)
 	}
 	return out, rows.Err()
 }
@@ -71,18 +71,18 @@ type CacheEntry struct {
 // Gates 2 and 3 must be enabled. Gate 1 is filtered in the cache rebuild loop.
 func (r *Repo) ListAllForCache(ctx context.Context) ([]CacheEntry, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT utm.user_id, utm.tenant_id, ues.event_type,
-		        uc.id, uc.channel_type, uc.config
-		 FROM user_tenant_channel_mapping utm
-		 JOIN user_channels uc
-		   ON uc.id       = utm.user_channel_id
-		  AND uc.is_active = TRUE
-		 JOIN user_event_subscriptions ues
-		   ON ues.user_id      = utm.user_id
-		  AND ues.tenant_id    = utm.tenant_id
-		  AND ues.channel_type = utm.channel_type
-		 WHERE utm.is_enabled = TRUE
-		   AND ues.is_enabled = TRUE`,
+		`SELECT channel_mapping.user_id, channel_mapping.tenant_id, event_sub.event_type,
+		        channel.id, channel.channel_type, channel.config
+		 FROM user_tenant_channel_mapping channel_mapping
+		 JOIN user_channels channel
+		   ON channel.id        = channel_mapping.user_channel_id
+		  AND channel.is_active = TRUE
+		 JOIN user_event_subscriptions event_sub
+		   ON event_sub.user_id      = channel_mapping.user_id
+		  AND event_sub.tenant_id    = channel_mapping.tenant_id
+		  AND event_sub.channel_type = channel_mapping.channel_type
+		 WHERE channel_mapping.is_enabled = TRUE
+		   AND event_sub.is_enabled = TRUE`,
 	)
 	if err != nil {
 		return nil, err
@@ -91,14 +91,14 @@ func (r *Repo) ListAllForCache(ctx context.Context) ([]CacheEntry, error) {
 
 	var out []CacheEntry
 	for rows.Next() {
-		var e CacheEntry
+		var entry CacheEntry
 		if err := rows.Scan(
-			&e.UserID, &e.TenantID, &e.EventType,
-			&e.ChannelID, &e.ChannelType, &e.Config,
+			&entry.UserID, &entry.TenantID, &entry.EventType,
+			&entry.ChannelID, &entry.ChannelType, &entry.Config,
 		); err != nil {
 			return nil, err
 		}
-		out = append(out, e)
+		out = append(out, entry)
 	}
 	return out, rows.Err()
 }

@@ -125,12 +125,12 @@ func (f *Fanout) FanBatch(ctx context.Context, q store.Querier, evs []events.Eve
 	// Round 1: insert all delivery records in one query; returned IDs are
 	// positionally aligned with targets so targets[i] ↔ deliveryIDs[i].
 	ds := make([]deliveries.Delivery, len(targets))
-	for i, t := range targets {
+	for i, target := range targets {
 		ds[i] = deliveries.Delivery{
-			EventID:     t.ev.ID,
-			ChannelID:   t.sub.ChannelID,
-			ChannelType: t.sub.ChannelType,
-			MaxAttempts: t.maxAttempts,
+			EventID:     target.ev.ID,
+			ChannelID:   target.sub.ChannelID,
+			ChannelType: target.sub.ChannelType,
+			MaxAttempts: target.maxAttempts,
 		}
 	}
 	deliveryIDs, err := deliveries.InsertBatch(ctx, q, ds)
@@ -141,11 +141,11 @@ func (f *Fanout) FanBatch(ctx context.Context, q store.Querier, evs []events.Eve
 	// Round 2: build outbox payloads embedding the delivery IDs, then insert.
 	routingKeys := make([]string, len(targets))
 	payloads := make([]json.RawMessage, len(targets))
-	for i, t := range targets {
-		routingKeys[i] = t.sub.ChannelType
-		raw, err := json.Marshal(newWorkerMessage(deliveryIDs[i], t.ev, t.sub, t.maxAttempts))
+	for i, target := range targets {
+		routingKeys[i] = target.sub.ChannelType
+		raw, err := json.Marshal(newWorkerMessage(deliveryIDs[i], target.ev, target.sub, target.maxAttempts))
 		if err != nil {
-			return 0, fmt.Errorf("marshal worker message (channel %d): %w", t.sub.ChannelID, err)
+			return 0, fmt.Errorf("marshal worker message (channel %d): %w", target.sub.ChannelID, err)
 		}
 		payloads[i] = raw
 	}

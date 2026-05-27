@@ -31,7 +31,7 @@ type Tenant struct {
 
 // Registry validates payloads and answers routing questions for known tenants.
 type Registry struct {
-	m       map[string]*jsonschema.Schema // "tenantID:eventType" → compiled schema
+	schemas map[string]*jsonschema.Schema // "tenantID:eventType" → compiled schema
 	tenants map[string]*Tenant            // tenantID → tenant
 	byKey   map[string]*Tenant            // apiKey → tenant
 }
@@ -41,18 +41,18 @@ type Registry struct {
 // Panics at startup if any schema file is missing or malformed — fail fast, not at runtime.
 func New(tenants []Tenant) *Registry {
 	compiler := jsonschema.NewCompiler()
-	m := make(map[string]*jsonschema.Schema)
+	schemas := make(map[string]*jsonschema.Schema)
 	byID := make(map[string]*Tenant, len(tenants))
 	byKey := make(map[string]*Tenant, len(tenants))
 
 	for i := range tenants {
-		t := &tenants[i]
-		byID[t.ID] = t
-		if t.APIKey != "" {
-			byKey[t.APIKey] = t
+		tenant := &tenants[i]
+		byID[tenant.ID] = tenant
+		if tenant.APIKey != "" {
+			byKey[tenant.APIKey] = tenant
 		}
-		for _, et := range t.EventTypes {
-			path := fmt.Sprintf("schemas/%s/%s.json", t.ID, et.Name)
+		for _, eventType := range tenant.EventTypes {
+			path := fmt.Sprintf("schemas/%s/%s.json", tenant.ID, eventType.Name)
 			data, err := schemaFS.ReadFile(path)
 			if err != nil {
 				panic(fmt.Sprintf("schema registry: missing schema file %s: %v", path, err))
@@ -64,17 +64,17 @@ func New(tenants []Tenant) *Registry {
 			if err != nil {
 				panic(fmt.Sprintf("schema registry: compile %s: %v", path, err))
 			}
-			m[t.ID+":"+et.Name] = compiled
+			schemas[tenant.ID+":"+eventType.Name] = compiled
 		}
 	}
-	return &Registry{m: m, tenants: byID, byKey: byKey}
+	return &Registry{schemas: schemas, tenants: byID, byKey: byKey}
 }
 
 // Validate checks payload against the registered schema for (tenantID, eventType).
 // Returns nil if valid or if no schema is registered (unknown tenants/events pass through).
 // Returns a descriptive error with field-level detail on validation failure.
 func (r *Registry) Validate(tenantID, eventType string, payload json.RawMessage) error {
-	s, ok := r.m[tenantID+":"+eventType]
+	s, ok := r.schemas[tenantID+":"+eventType]
 	if !ok {
 		return nil
 	}
@@ -87,7 +87,7 @@ func (r *Registry) Validate(tenantID, eventType string, payload json.RawMessage)
 
 // Has reports whether (tenantID, eventType) is registered.
 func (r *Registry) Has(tenantID, eventType string) bool {
-	_, ok := r.m[tenantID+":"+eventType]
+	_, ok := r.schemas[tenantID+":"+eventType]
 	return ok
 }
 

@@ -26,12 +26,12 @@ type Repo struct{ pool *pgxpool.Pool }
 
 func New(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
 
-func (r *Repo) Insert(ctx context.Context, ch UserChannel) (int64, error) {
+func (r *Repo) Insert(ctx context.Context, channel UserChannel) (int64, error) {
 	var id int64
 	err := r.pool.QueryRow(ctx,
 		`INSERT INTO user_channels (user_id, channel_type, label, config)
 		 VALUES ($1, $2, $3, $4) RETURNING id`,
-		ch.UserID, ch.ChannelType, ch.Label, ch.Config,
+		channel.UserID, channel.ChannelType, channel.Label, channel.Config,
 	).Scan(&id)
 	return id, err
 }
@@ -48,12 +48,12 @@ func (r *Repo) ListByUser(ctx context.Context, userID string) ([]UserChannel, er
 	defer rows.Close()
 	var out []UserChannel
 	for rows.Next() {
-		var ch UserChannel
-		if err := rows.Scan(&ch.ID, &ch.UserID, &ch.ChannelType, &ch.Label,
-			&ch.Config, &ch.IsActive, &ch.CreatedAt); err != nil {
+		var channel UserChannel
+		if err := rows.Scan(&channel.ID, &channel.UserID, &channel.ChannelType, &channel.Label,
+			&channel.Config, &channel.IsActive, &channel.CreatedAt); err != nil {
 			return nil, err
 		}
-		out = append(out, ch)
+		out = append(out, channel)
 	}
 	return out, rows.Err()
 }
@@ -86,8 +86,6 @@ func (r *Repo) Delete(ctx context.Context, userID string, id int64) error {
 	return nil
 }
 
-// MarkInactive sets is_active = false. Called by the push adapter when
-// FCM or APNs returns 410 (token invalid / stale).
 func (r *Repo) MarkInactive(ctx context.Context, id int64) error {
 	_, err := r.pool.Exec(ctx,
 		`UPDATE user_channels SET is_active = FALSE WHERE id = $1`,
@@ -101,11 +99,11 @@ func (r *Repo) GetByID(ctx context.Context, id int64) (*UserChannel, error) {
 		`SELECT id, user_id, channel_type, label, config, is_active, created_at
 		 FROM user_channels WHERE id = $1`, id,
 	)
-	var ch UserChannel
-	err := row.Scan(&ch.ID, &ch.UserID, &ch.ChannelType, &ch.Label,
-		&ch.Config, &ch.IsActive, &ch.CreatedAt)
+	var channel UserChannel
+	err := row.Scan(&channel.ID, &channel.UserID, &channel.ChannelType, &channel.Label,
+		&channel.Config, &channel.IsActive, &channel.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
-	return &ch, err
+	return &channel, err
 }

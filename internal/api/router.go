@@ -73,8 +73,8 @@ func NewRouter(
 	r.With(authMW).Route("/v1", func(r chi.Router) {
 		if cfg.Limiter != nil {
 			r.Use(cfg.Limiter.Middleware(func(r *http.Request) string {
-				if t := middleware.TenantFromContext(r.Context()); t != nil {
-					return t.ID
+				if tenant := middleware.TenantFromContext(r.Context()); tenant != nil {
+					return tenant.ID
 				}
 				return ""
 			}))

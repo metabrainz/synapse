@@ -18,19 +18,19 @@ const confirmBufSize = 512
 // PublishBatch gives at-least-once delivery: the relay will not delete an
 // outbox row until the broker has confirmed it received the message.
 type Publisher struct {
-	url      string
-	mu       sync.Mutex
-	conn     *amqp.Connection
-	ch       *amqp.Channel
-	confirms chan amqp.Confirmation
+	url         string
+	mu          sync.Mutex
+	conn        *amqp.Connection
+	amqpChannel *amqp.Channel
+	confirms    chan amqp.Confirmation
 }
 
 func New(url string) (*Publisher, error) {
-	p := &Publisher{url: url}
-	if err := p.connect(); err != nil {
+	publisher := &Publisher{url: url}
+	if err := publisher.connect(); err != nil {
 		return nil, err
 	}
-	return p, nil
+	return publisher, nil
 }
 
 func (p *Publisher) connect() error {
@@ -43,20 +43,20 @@ func (p *Publisher) connect() error {
 	if err != nil {
 		return fmt.Errorf("amqp dial: %w", err)
 	}
-	ch, err := conn.Channel()
+	amqpChannel, err := conn.Channel()
 	if err != nil {
 		conn.Close()
 		return fmt.Errorf("amqp channel: %w", err)
 	}
 	// Enable publisher confirms. The broker will now ack every published
 	// message. Without this, publishing is fire-and-forget at the protocol level.
-	if err := ch.Confirm(false); err != nil {
+	if err := amqpChannel.Confirm(false); err != nil {
 		conn.Close()
 		return fmt.Errorf("enable publisher confirms: %w", err)
 	}
 	p.conn = conn
-	p.ch = ch
-	p.confirms = ch.NotifyPublish(make(chan amqp.Confirmation, confirmBufSize))
+	p.amqpChannel = amqpChannel
+	p.confirms = amqpChannel.NotifyPublish(make(chan amqp.Confirmation, confirmBufSize))
 	return nil
 }
 
@@ -80,16 +80,16 @@ func (p *Publisher) PublishBatch(ctx context.Context, msgs []broker.BatchMsg) ([
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	startTag := p.ch.GetNextPublishSeqNo()
+	startTag := p.amqpChannel.GetNextPublishSeqNo()
 
 	// Phase A — publish everything without waiting for confirms.
-	for _, m := range msgs {
+	for _, msg := range msgs {
 		pub := amqp.Publishing{
 			ContentType:  "application/json",
 			DeliveryMode: amqp.Persistent,
-			Body:         m.Body,
+			Body:         msg.Body,
 		}
-		if err := p.ch.PublishWithContext(ctx, exchange, m.RoutingKey, false, false, pub); err != nil {
+		if err := p.amqpChannel.PublishWithContext(ctx, exchange, msg.RoutingKey, false, false, pub); err != nil {
 			// Publish failure does NOT guarantee broker absence.
 			// Message may already have been received before connection loss.
 			//
@@ -110,11 +110,11 @@ func (p *Publisher) PublishBatch(ctx context.Context, msgs []broker.BatchMsg) ([
 
 	for receivedCount < n {
 		select {
-		case c, ok := <-p.confirms:
+		case confirmation, ok := <-p.confirms:
 			if !ok {
 				return nil, fmt.Errorf("confirm channel closed")
 			}
-			idx := int(c.DeliveryTag - startTag)
+			idx := int(confirmation.DeliveryTag - startTag)
 			if idx < 0 || idx >= n {
 				continue
 			}
@@ -122,7 +122,7 @@ func (p *Publisher) PublishBatch(ctx context.Context, msgs []broker.BatchMsg) ([
 				continue
 			}
 			received[idx] = true
-			acked[idx] = c.Ack
+			acked[idx] = confirmation.Ack
 			receivedCount++
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -130,9 +130,9 @@ func (p *Publisher) PublishBatch(ctx context.Context, msgs []broker.BatchMsg) ([
 	}
 
 	confirmedIDs := make([]int64, 0, n)
-	for i, m := range msgs {
+	for i, msg := range msgs {
 		if acked[i] {
-			confirmedIDs = append(confirmedIDs, m.ID)
+			confirmedIDs = append(confirmedIDs, msg.ID)
 		}
 	}
 	return confirmedIDs, nil
