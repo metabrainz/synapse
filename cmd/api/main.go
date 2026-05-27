@@ -17,6 +17,7 @@ import (
 	"github.com/metabrainz/synapse/internal/config"
 	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/ratelimit"
 	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store"
@@ -25,6 +26,10 @@ import (
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 	"github.com/metabrainz/synapse/internal/store/tenantrules"
 	"github.com/metabrainz/synapse/internal/store/tenants"
+	"github.com/metabrainz/synapse/internal/store/userchannels"
+	"github.com/metabrainz/synapse/internal/store/usereventsubs"
+	"github.com/metabrainz/synapse/internal/store/users"
+	"github.com/metabrainz/synapse/internal/store/usertenant"
 )
 
 func main() {
@@ -60,6 +65,22 @@ func main() {
 	etRepo := eventtypes.New(pool)
 	rulesRepo := tenantrules.New(pool)
 
+	usersRepo := users.New(pool)
+	userChannels := userchannels.New(pool)
+	tenantMappings := usertenant.New(pool)
+	eventSubs := usereventsubs.New(pool)
+
+	if cfg.OAuth.ClientID == "" || cfg.OAuth.IntrospectionURL == "" {
+		slog.Error("oauth: client_id and introspection_url are required")
+		os.Exit(1)
+	}
+	introspector := oauth.NewMBIntrospector(
+		cfg.OAuth.ClientID,
+		cfg.OAuth.ClientSecret,
+		cfg.OAuth.IntrospectionURL,
+		rdb,
+	)
+
 	reg := schema.New(schema.KnownTenants)
 
 	cache := fanout.NewCache(pool, subRepo, cfg.Postgres.DirectDSN)
@@ -78,7 +99,8 @@ func main() {
 
 	router := api.NewRouter(
 		api.Config{
-			AdminKey: cfg.HTTP.AdminKey,
+			AdminKey:     cfg.HTTP.AdminKey,
+			Introspector: introspector,
 			Health: api.HealthChecks{
 				Redis: func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
 			},
@@ -90,6 +112,10 @@ func main() {
 		subRepo,
 		etRepo,
 		rulesRepo,
+		usersRepo,
+		userChannels,
+		tenantMappings,
+		eventSubs,
 		fan,
 		deduper,
 		reg,

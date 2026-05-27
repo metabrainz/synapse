@@ -14,6 +14,13 @@ type Config struct {
 	Relay     RelayConfig     `yaml:"relay"`
 	Ingest    IngestConfig    `yaml:"ingest"`
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
+	OAuth     OAuthConfig     `yaml:"oauth"`
+}
+
+type OAuthConfig struct {
+	ClientID         string `yaml:"client_id"`
+	ClientSecret     string `yaml:"client_secret"`
+	IntrospectionURL string `yaml:"introspection_url"`
 }
 
 type PostgresConfig struct {

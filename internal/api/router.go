@@ -10,6 +10,7 @@ import (
 	"github.com/metabrainz/synapse/internal/api/middleware"
 	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/ratelimit"
 	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store/channels"
@@ -17,6 +18,10 @@ import (
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 	"github.com/metabrainz/synapse/internal/store/tenantrules"
 	"github.com/metabrainz/synapse/internal/store/tenants"
+	"github.com/metabrainz/synapse/internal/store/userchannels"
+	"github.com/metabrainz/synapse/internal/store/usereventsubs"
+	"github.com/metabrainz/synapse/internal/store/users"
+	"github.com/metabrainz/synapse/internal/store/usertenant"
 )
 
 // HealthChecks holds optional probe functions for /health/ready.
@@ -26,9 +31,10 @@ type HealthChecks struct {
 }
 
 type Config struct {
-	AdminKey string
-	Health   HealthChecks
-	Limiter  *ratelimit.Limiter // nil disables rate limiting
+	AdminKey     string
+	Introspector oauth.Introspector
+	Health       HealthChecks
+	Limiter      *ratelimit.Limiter
 }
 
 func NewRouter(
@@ -39,6 +45,10 @@ func NewRouter(
 	subRepo *subscriptions.Repo,
 	etRepo *eventtypes.Repo,
 	rulesRepo *tenantrules.Repo,
+	usersRepo *users.Repo,
+	userChannels *userchannels.Repo,
+	tenantMappings *usertenant.Repo,
+	subscriptions *usereventsubs.Repo,
 	fan *fanout.Fanout,
 	deduper *dedup.Deduper,
 	reg *schema.Registry,
@@ -116,6 +126,28 @@ func NewRouter(
 			r.Get("/{id}/subscriptions", sub.list)
 			r.Delete("/{id}/subscriptions/{event_type}", sub.delete)
 		})
+	})
+
+	// User OAuth routes.
+	userMW := middleware.NewUserAuth(cfg.Introspector, usersRepo)
+	me := &meHandler{
+		channels:       userChannels,
+		tenantMappings: tenantMappings,
+		subscriptions:  subscriptions,
+	}
+
+	r.With(userMW).Route("/v1/me", func(r chi.Router) {
+		r.Get("/channels", me.listChannels)
+		r.Post("/channels", me.createChannel)
+		r.Delete("/channels/{id}", me.deleteChannel)
+
+		r.Get("/tenants/{tenant_id}/channels", me.listTenantChannels)
+		r.Put("/tenants/{tenant_id}/channels/{channel_type}", me.assignTenantChannel)
+		r.Delete("/tenants/{tenant_id}/channels/{channel_type}", me.removeTenantChannel)
+
+		r.Get("/tenants/{tenant_id}/subscriptions", me.listSubscriptions)
+		r.Put("/tenants/{tenant_id}/subscriptions/{event_type}/{channel_type}", me.subscribe)
+		r.Delete("/tenants/{tenant_id}/subscriptions/{event_type}/{channel_type}", me.unsubscribe)
 	})
 
 	return r

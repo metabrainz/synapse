@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/metabrainz/synapse/internal/config"
 	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/channels"
@@ -33,6 +35,10 @@ import (
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 	"github.com/metabrainz/synapse/internal/store/tenantrules"
 	"github.com/metabrainz/synapse/internal/store/tenants"
+	"github.com/metabrainz/synapse/internal/store/userchannels"
+	"github.com/metabrainz/synapse/internal/store/usereventsubs"
+	"github.com/metabrainz/synapse/internal/store/users"
+	"github.com/metabrainz/synapse/internal/store/usertenant"
 	"github.com/metabrainz/synapse/internal/worker"
 	"github.com/metabrainz/synapse/testutil"
 )
@@ -49,6 +55,7 @@ type env struct {
 	fan     *fanout.Fanout      // shared with the HTTP server — cache-backed in tests
 	deduper *dedup.Deduper      // shared with workers — backed by the test Redis instance
 	pub     *rabbitmq.Publisher // long-lived publisher used by relayTick
+	stub    *stubIntrospector
 }
 
 // setup spins up real infrastructure (Postgres, Redis, RabbitMQ), runs migrations,
@@ -115,14 +122,23 @@ func setup(t *testing.T) *env {
 
 	reg := schema.New(schema.KnownTenants)
 
+	stub := newStubIntrospector()
+
 	router := api.NewRouter(
-		api.Config{AdminKey: adminKey},
+		api.Config{
+			AdminKey:     adminKey,
+			Introspector: stub,
+		},
 		pool,
 		tenants.New(pool),
 		channels.New(pool),
 		subRepo,
 		eventtypes.New(pool),
 		tenantrules.New(pool),
+		users.New(pool),
+		userchannels.New(pool),
+		usertenant.New(pool),
+		usereventsubs.New(pool),
 		fan,
 		deduper,
 		reg,
@@ -146,6 +162,7 @@ func setup(t *testing.T) *env {
 		fan:     fan,
 		deduper: deduper,
 		pub:     pub,
+		stub:    stub,
 	}
 }
 
@@ -155,7 +172,9 @@ func (e *env) do(method, path string, body any, headers map[string]string) *http
 	e.t.Helper()
 	var buf bytes.Buffer
 	if body != nil {
-		json.NewEncoder(&buf).Encode(body)
+		if err := json.NewEncoder(&buf).Encode(body); err != nil {
+			e.t.Fatalf("encode request body: %v", err)
+		}
 	}
 	req, err := http.NewRequestWithContext(e.ctx, method, e.server.URL+path, &buf)
 	if err != nil {
@@ -178,6 +197,11 @@ func (e *env) adminDo(method, path string, body any) *http.Response {
 
 func (e *env) tenantDo(method, path string, body any, apiKey string) *http.Response {
 	return e.do(method, path, body, map[string]string{"Authorization": "Bearer " + apiKey})
+}
+
+// userDo makes an OAuth-authenticated request (Bearer token, /v1/me/* routes).
+func (e *env) userDo(method, path string, body any, token string) *http.Response {
+	return e.do(method, path, body, map[string]string{"Authorization": "Bearer " + token})
 }
 
 func decodeJSON(t *testing.T, resp *http.Response, v any) {
@@ -370,13 +394,18 @@ func deleteQueues(amqpURL string) error {
 // (no user-facing API exists yet). Returns the user_channel ID.
 func (e *env) setupChannel(tenantID, userID, channelType, eventType, channelURL string) int64 {
 	e.t.Helper()
-	e.mustExec(`INSERT INTO users (id) VALUES ($1) ON CONFLICT DO NOTHING`, userID)
+	e.mustExec(`INSERT INTO users (id) VALUES ($1) ON CONFLICT (id) DO NOTHING`, userID)
+
+	chanConfig, err := json.Marshal(map[string]string{"url": channelURL})
+	if err != nil {
+		e.t.Fatalf("setupChannel: marshal config: %v", err)
+	}
 
 	var channelID int64
 	if err := e.pool.QueryRow(e.ctx,
 		`INSERT INTO user_channels (user_id, channel_type, label, config)
 		 VALUES ($1, $2, 'Test', $3) RETURNING id`,
-		userID, channelType, `{"url":"`+channelURL+`"}`,
+		userID, channelType, chanConfig,
 	).Scan(&channelID); err != nil {
 		e.t.Fatalf("setupChannel: insert user_channel: %v", err)
 	}
@@ -421,6 +450,35 @@ func parseEventID(t *testing.T, resp *http.Response) int64 {
 	}
 	return int64(v)
 }
+
+// stubIntrospector implements oauth.Introspector for e2e tests.
+// Register tokens with stub.grant(token, id) before making requests.
+type stubIntrospector struct {
+	mu     sync.RWMutex
+	tokens map[string]oauth.Claims
+}
+
+func newStubIntrospector() *stubIntrospector {
+	return &stubIntrospector{tokens: make(map[string]oauth.Claims)}
+}
+
+func (s *stubIntrospector) grant(token, id string) {
+	s.mu.Lock()
+	s.tokens[token] = oauth.Claims{ID: id}
+	s.mu.Unlock()
+}
+
+func (s *stubIntrospector) Introspect(_ context.Context, token string) (oauth.Claims, error) {
+	s.mu.RLock()
+	claims, ok := s.tokens[token]
+	s.mu.RUnlock()
+	if !ok {
+		return oauth.Claims{}, oauth.ErrInactive
+	}
+	return claims, nil
+}
+
+var _ oauth.Introspector = (*stubIntrospector)(nil)
 
 // adapterFunc lets tests implement adapter.Adapter inline with a closure.
 type adapterFunc func(context.Context, fanout.WorkerMessage) error

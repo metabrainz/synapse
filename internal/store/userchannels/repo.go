@@ -73,11 +73,17 @@ func (r *Repo) UpdateConfig(ctx context.Context, userID string, id int64, config
 }
 
 func (r *Repo) Delete(ctx context.Context, userID string, id int64) error {
-	_, err := r.pool.Exec(ctx,
+	tag, err := r.pool.Exec(ctx,
 		`DELETE FROM user_channels WHERE id = $1 AND user_id = $2`,
 		id, userID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // MarkInactive sets is_active = false. Called by the push adapter when

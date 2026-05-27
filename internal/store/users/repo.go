@@ -16,7 +16,6 @@ type Repo struct{ pool *pgxpool.Pool }
 
 func New(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
 
-// Upsert inserts a user row if it does not exist.
 func (r *Repo) Upsert(ctx context.Context, id string) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO users (id) VALUES ($1) ON CONFLICT (id) DO NOTHING`,
