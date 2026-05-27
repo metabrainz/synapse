@@ -18,8 +18,8 @@ func main() {
 	flag.Parse()
 
 	direction := flag.Arg(0)
-	if direction != "up" && direction != "down" {
-		fmt.Fprintln(os.Stderr, "usage: migrate [-config path] <up|down>")
+	if direction != "up" && direction != "down" && direction != "force" {
+		fmt.Fprintln(os.Stderr, "usage: migrate [-config path] <up|down|force <version>>")
 		os.Exit(1)
 	}
 
@@ -41,6 +41,18 @@ func main() {
 		err = m.Up()
 	case "down":
 		err = m.Steps(-1)
+	case "force":
+		versionStr := flag.Arg(1)
+		if versionStr == "" {
+			fmt.Fprintln(os.Stderr, "usage: migrate force <version>")
+			os.Exit(1)
+		}
+		var version int
+		if _, scanErr := fmt.Sscanf(versionStr, "%d", &version); scanErr != nil {
+			fmt.Fprintf(os.Stderr, "force: invalid version %q\n", versionStr)
+			os.Exit(1)
+		}
+		err = m.Force(version)
 	}
 
 	if err != nil && !errors.Is(err, migrate.ErrNoChange) {

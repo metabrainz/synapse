@@ -15,7 +15,7 @@ func TestIngestRequiresAuth(t *testing.T) {
 	e := setup(t)
 
 	resp := e.do("POST", "/v1/events",
-		map[string]any{"user_id": "u", "event_type": "ping"},
+		map[string]any{"user_id": "u", "event_type": "listen"},
 		nil,
 	)
 	defer resp.Body.Close()
@@ -24,7 +24,7 @@ func TestIngestRequiresAuth(t *testing.T) {
 	}
 
 	resp2 := e.do("POST", "/v1/events",
-		map[string]any{"user_id": "u", "event_type": "ping"},
+		map[string]any{"user_id": "u", "event_type": "listen"},
 		map[string]string{"Authorization": "Bearer wrong-key"},
 	)
 	defer resp2.Body.Close()
@@ -37,19 +37,17 @@ func TestIngestRequiresAuth(t *testing.T) {
 
 func TestIngestMissingFields(t *testing.T) {
 	e := setup(t)
-	apiKey := e.createTenant("val1", "Validation")
-	e.registerEventType("val1", "ping")
 
 	cases := []struct {
 		name string
 		body map[string]any
 	}{
-		{"missing user_id", map[string]any{"event_type": "ping"}},
+		{"missing user_id", map[string]any{"event_type": "listen"}},
 		{"missing event_type", map[string]any{"user_id": "u"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := e.tenantDo("POST", "/v1/events", tc.body, apiKey)
+			resp := e.tenantDo("POST", "/v1/events", tc.body, e.apiKey)
 			defer resp.Body.Close()
 			if resp.StatusCode != http.StatusBadRequest {
 				t.Fatalf("%s: want 400, got %d", tc.name, resp.StatusCode)
@@ -60,12 +58,10 @@ func TestIngestMissingFields(t *testing.T) {
 
 func TestIngestUnregisteredEventType(t *testing.T) {
 	e := setup(t)
-	apiKey := e.createTenant("val2", "Validation2")
-	// Intentionally skip registerEventType.
 
 	resp := e.tenantDo("POST", "/v1/events",
 		map[string]any{"user_id": "u", "event_type": "not.registered", "payload": map[string]string{}},
-		apiKey,
+		e.apiKey,
 	)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
@@ -77,12 +73,10 @@ func TestIngestUnregisteredEventType(t *testing.T) {
 
 func TestIngestNoSubscribers(t *testing.T) {
 	e := setup(t)
-	apiKey := e.createTenant("ns1", "NoSubs")
-	e.registerEventType("ns1", "ping")
 
 	resp := e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "u", "event_type": "ping", "payload": map[string]string{}},
-		apiKey,
+		map[string]any{"user_id": "u", "event_type": "listen", "payload": testListenPayload()},
+		e.apiKey,
 	)
 	var out map[string]any
 	decodeJSON(t, resp, &out)
@@ -94,7 +88,6 @@ func TestIngestNoSubscribers(t *testing.T) {
 		t.Fatalf("want delivery_count=0, got %v", out["delivery_count"])
 	}
 
-	// No outbox rows — nothing to relay.
 	msgs, err := outbox.FetchPending(e.ctx, e.pool, 10)
 	if err != nil {
 		t.Fatalf("fetch outbox: %v", err)
@@ -106,18 +99,16 @@ func TestIngestNoSubscribers(t *testing.T) {
 
 func TestIngestCreatesDeliveryAndOutboxRows(t *testing.T) {
 	e := setup(t)
-	apiKey := e.createTenant("lb", "ListenBrainz")
-	e.registerEventType("lb", "listen")
-	e.setupWebhookChannel("lb", "user-1", "listen", "https://example.com/hook")
-	e.waitForCacheWarm(apiKey, "user-1", "listen")
+	e.setupWebhookChannel(testTenantID, "user-1", "listen", "https://example.com/hook")
+	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	resp := e.tenantDo("POST", "/v1/events",
 		map[string]any{
 			"user_id":    "user-1",
 			"event_type": "listen",
-			"payload":    map[string]string{"track": "Pyramid Song"},
+			"payload":    testListenPayload(),
 		},
-		apiKey,
+		e.apiKey,
 	)
 	var out map[string]any
 	decodeJSON(t, resp, &out)
@@ -145,25 +136,23 @@ func TestIngestCreatesDeliveryAndOutboxRows(t *testing.T) {
 
 func TestIngestIdempotency(t *testing.T) {
 	e := setup(t)
-	apiKey := e.createTenant("mb", "MusicBrainz")
-	e.registerEventType("mb", "edit.created")
-	e.setupWebhookChannel("mb", "user-1", "edit.created", "https://example.com/hook")
-	e.waitForCacheWarm(apiKey, "user-1", "edit.created")
+	e.setupWebhookChannel(testTenantID, "user-1", "listen", "https://example.com/hook")
+	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	payload := map[string]any{
 		"user_id":         "user-1",
-		"event_type":      "edit.created",
-		"payload":         map[string]string{"edit_id": "42"},
-		"idempotency_key": "edit-42-key",
+		"event_type":      "listen",
+		"payload":         testListenPayload(),
+		"idempotency_key": "listen-42-key",
 	}
 
-	resp1 := e.tenantDo("POST", "/v1/events", payload, apiKey)
+	resp1 := e.tenantDo("POST", "/v1/events", payload, e.apiKey)
 	if resp1.StatusCode != http.StatusAccepted {
 		t.Fatalf("first request: want 202, got %d", resp1.StatusCode)
 	}
 	resp1.Body.Close()
 
-	resp2 := e.tenantDo("POST", "/v1/events", payload, apiKey)
+	resp2 := e.tenantDo("POST", "/v1/events", payload, e.apiKey)
 	var out map[string]any
 	decodeJSON(t, resp2, &out)
 	if resp2.StatusCode != http.StatusOK {
@@ -173,9 +162,8 @@ func TestIngestIdempotency(t *testing.T) {
 		t.Fatalf("want deduplicated=true, got %v", out["deduplicated"])
 	}
 
-	// Only one event row in DB.
 	var count int
-	e.pool.QueryRow(e.ctx, `SELECT COUNT(*) FROM events WHERE tenant_id = 'mb'`).Scan(&count)
+	e.pool.QueryRow(e.ctx, `SELECT COUNT(*) FROM events WHERE tenant_id = $1`, testTenantID).Scan(&count)
 	if count != 1 {
 		t.Fatalf("want 1 event in DB, got %d", count)
 	}
@@ -185,14 +173,12 @@ func TestIngestIdempotency(t *testing.T) {
 
 func TestIngestDryRun(t *testing.T) {
 	e := setup(t)
-	apiKey := e.createTenant("bb", "BookBrainz")
-	e.registerEventType("bb", "review.created")
-	e.setupWebhookChannel("bb", "user-1", "review.created", "https://example.com/hook")
-	e.waitForCacheWarm(apiKey, "user-1", "review.created")
+	e.setupWebhookChannel(testTenantID, "user-1", "listen", "https://example.com/hook")
+	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	resp := e.tenantDo("POST", "/v1/events?dry_run=true",
-		map[string]any{"user_id": "user-1", "event_type": "review.created", "payload": map[string]string{}},
-		apiKey,
+		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		e.apiKey,
 	)
 	var out map[string]any
 	decodeJSON(t, resp, &out)
@@ -204,7 +190,6 @@ func TestIngestDryRun(t *testing.T) {
 		t.Fatalf("want delivery_count=1, got %v", out["delivery_count"])
 	}
 
-	// Dry run must not write anything.
 	msgs, err := outbox.FetchPending(e.ctx, e.pool, 10)
 	if err != nil {
 		t.Fatalf("fetch outbox: %v", err)

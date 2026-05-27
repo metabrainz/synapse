@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -29,12 +28,8 @@ import (
 	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store"
-	"github.com/metabrainz/synapse/internal/store/channels"
-	"github.com/metabrainz/synapse/internal/store/eventtypes"
 	"github.com/metabrainz/synapse/internal/store/outbox"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
-	"github.com/metabrainz/synapse/internal/store/tenantrules"
-	"github.com/metabrainz/synapse/internal/store/tenants"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
 	"github.com/metabrainz/synapse/internal/store/usereventsubs"
 	"github.com/metabrainz/synapse/internal/store/users"
@@ -43,7 +38,10 @@ import (
 	"github.com/metabrainz/synapse/testutil"
 )
 
-const adminKey = "test-admin-key"
+const (
+	testTenantID = "listenbrainz"
+	testAPIKey   = "test-lb-api-key"
+)
 
 // env holds all live infrastructure a test needs to drive the full Synapse stack.
 type env struct {
@@ -52,8 +50,9 @@ type env struct {
 	pool    *pgxpool.Pool
 	server  *httptest.Server
 	amqpURL string
-	fan     *fanout.Fanout      // shared with the HTTP server — cache-backed in tests
-	deduper *dedup.Deduper      // shared with workers — backed by the test Redis instance
+	apiKey  string         // static tenant API key for testTenantID
+	fan     *fanout.Fanout // shared with the HTTP server — cache-backed in tests
+	deduper *dedup.Deduper // shared with workers — backed by the test Redis instance
 	pub     *rabbitmq.Publisher // long-lived publisher used by relayTick
 	stub    *stubIntrospector
 }
@@ -71,11 +70,11 @@ func setup(t *testing.T) *env {
 	// its connection before the pool waits on open connections during Close.
 	t.Cleanup(cancel)
 
-	// Truncate all tables so tests that share a local Postgres instance don't bleed.
+	// Truncate all surviving tables so tests that share a local Postgres instance don't bleed.
 	if _, err := pool.Exec(ctx,
-		`TRUNCATE outbox, deliveries, subscriptions, channels, event_type_definitions, events,
-		          user_event_subscriptions, user_tenant_channel_mapping, tenant_event_channel_rules,
-		          user_channels, users, tenants RESTART IDENTITY CASCADE`,
+		`TRUNCATE outbox, deliveries, events,
+		          user_event_subscriptions, user_tenant_channel_mapping,
+		          user_channels, users RESTART IDENTITY CASCADE`,
 	); err != nil {
 		t.Fatalf("truncate tables: %v", err)
 	}
@@ -110,31 +109,32 @@ func setup(t *testing.T) *env {
 		t.Fatalf("flush redis: %v", err)
 	}
 
+	// Build registry with a fixed test API key for the listenbrainz tenant.
+	tenants := schema.KnownTenants
+	for i := range tenants {
+		if tenants[i].ID == testTenantID {
+			tenants[i].APIKey = testAPIKey
+		}
+	}
+	reg := schema.New(tenants)
+
 	subRepo := subscriptions.New(pool)
 	// "" → listenDSN derived from pool config; correct when there is no PgBouncer.
-	cache := fanout.NewCache(pool, subRepo, "")
+	cache := fanout.NewCache(pool, subRepo, "", reg)
 	if err := cache.Start(ctx); err != nil {
 		t.Fatalf("fanout cache: %v", err)
 	}
 
-	fan := fanout.New(cache, adapter.MaxAttemptsFor)
+	fan := fanout.New(cache, adapter.MaxAttemptsFor, reg)
 	deduper := dedup.New(rdb)
-
-	reg := schema.New(schema.KnownTenants)
 
 	stub := newStubIntrospector()
 
 	router := api.NewRouter(
 		api.Config{
-			AdminKey:     adminKey,
 			Introspector: stub,
 		},
 		pool,
-		tenants.New(pool),
-		channels.New(pool),
-		subRepo,
-		eventtypes.New(pool),
-		tenantrules.New(pool),
 		users.New(pool),
 		userchannels.New(pool),
 		usertenant.New(pool),
@@ -159,6 +159,7 @@ func setup(t *testing.T) *env {
 		pool:    pool,
 		server:  srv,
 		amqpURL: amqpURL,
+		apiKey:  testAPIKey,
 		fan:     fan,
 		deduper: deduper,
 		pub:     pub,
@@ -191,10 +192,6 @@ func (e *env) do(method, path string, body any, headers map[string]string) *http
 	return resp
 }
 
-func (e *env) adminDo(method, path string, body any) *http.Response {
-	return e.do(method, path, body, map[string]string{"X-Admin-Key": adminKey})
-}
-
 func (e *env) tenantDo(method, path string, body any, apiKey string) *http.Response {
 	return e.do(method, path, body, map[string]string{"Authorization": "Bearer " + apiKey})
 }
@@ -210,73 +207,6 @@ func decodeJSON(t *testing.T, resp *http.Response, v any) {
 	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
 		t.Fatalf("decode response (status %d): %v", resp.StatusCode, err)
 	}
-}
-
-// ── Fixture helpers ───────────────────────────────────────────────────────────
-
-func (e *env) createTenant(id, name string) (apiKey string) {
-	e.t.Helper()
-	resp := e.adminDo("POST", "/v1/admin/tenants", map[string]string{"id": id, "name": name})
-	if resp.StatusCode != http.StatusCreated {
-		e.t.Fatalf("createTenant: want 201, got %d", resp.StatusCode)
-	}
-	var out map[string]string
-	decodeJSON(e.t, resp, &out)
-	return out["api_key"]
-}
-
-func (e *env) registerEventType(tenantID, eventType string) {
-	e.t.Helper()
-	resp := e.adminDo("POST", fmt.Sprintf("/v1/admin/tenants/%s/event-types", tenantID),
-		map[string]string{"event_type": eventType},
-	)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		e.t.Fatalf("registerEventType: want 201, got %d", resp.StatusCode)
-	}
-}
-
-func (e *env) registerChannelRule(tenantID, eventType, channelType string) {
-	e.t.Helper()
-	resp := e.adminDo("PUT", fmt.Sprintf("/v1/admin/tenants/%s/channel-rules", tenantID),
-		map[string]any{"event_type": eventType, "channel_type": channelType, "is_allowed": true},
-	)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		e.t.Fatalf("registerChannelRule: want 204, got %d", resp.StatusCode)
-	}
-}
-
-func (e *env) createChannel(apiKey, userID, chanType string, cfg map[string]string) int64 {
-	e.t.Helper()
-	resp := e.tenantDo("POST", fmt.Sprintf("/v1/users/%s/channels", userID),
-		map[string]any{"type": chanType, "config": cfg},
-		apiKey,
-	)
-	if resp.StatusCode != http.StatusCreated {
-		e.t.Fatalf("createChannel: want 201, got %d", resp.StatusCode)
-	}
-	var out map[string]int64
-	decodeJSON(e.t, resp, &out)
-	return out["id"]
-}
-
-func (e *env) createWebhookChannel(apiKey, userID, webhookURL string) int64 {
-	return e.createChannel(apiKey, userID, "webhook", map[string]string{"url": webhookURL})
-}
-
-func (e *env) createSubscription(apiKey, userID string, channelID int64, eventType string) {
-	e.t.Helper()
-	resp := e.tenantDo(
-		"POST",
-		fmt.Sprintf("/v1/users/%s/channels/%d/subscriptions", userID, channelID),
-		map[string]string{"event_type": eventType},
-		apiKey,
-	)
-	if resp.StatusCode != http.StatusCreated {
-		e.t.Fatalf("createSubscription: want 201, got %d", resp.StatusCode)
-	}
-	resp.Body.Close()
 }
 
 // ── Pipeline helpers ──────────────────────────────────────────────────────────
@@ -323,13 +253,24 @@ func waitFor(t *testing.T, timeout time.Duration, check func() bool) {
 	t.Fatalf("condition not met within %s", timeout)
 }
 
+// testListenPayload returns a minimal valid payload for the listenbrainz/listen event type.
+func testListenPayload() map[string]any {
+	return map[string]any{
+		"listened_at": time.Now().Unix(),
+		"track_metadata": map[string]any{
+			"track_name":  "Test Track",
+			"artist_name": "Test Artist",
+		},
+	}
+}
+
 // waitForCacheWarm polls the dry_run endpoint until the in-memory fanout cache
-// has picked up a subscription. Avoids fragile time.Sleep calls after createSubscription.
+// has picked up a subscription. Avoids fragile time.Sleep calls after setupChannel.
 func (e *env) waitForCacheWarm(apiKey, userID, eventType string) {
 	e.t.Helper()
 	waitFor(e.t, 2*time.Second, func() bool {
 		resp := e.tenantDo("POST", "/v1/events?dry_run=true",
-			map[string]any{"user_id": userID, "event_type": eventType, "payload": map[string]string{}},
+			map[string]any{"user_id": userID, "event_type": eventType, "payload": testListenPayload()},
 			apiKey,
 		)
 		defer resp.Body.Close()
@@ -389,9 +330,9 @@ func deleteQueues(amqpURL string) error {
 	return nil
 }
 
-// setupChannel seeds all three routing gates for one (user, tenant, channelType, eventType)
-// combination. Gate 1 goes through the real admin API; Gates 2 and 3 are seeded directly
-// (no user-facing API exists yet). Returns the user_channel ID.
+// setupChannel seeds all routing gates (Gates 2 and 3) for one (user, tenant, channelType, eventType)
+// combination directly in the DB. Gate 1 is enforced by the static registry.
+// Returns the user_channel ID.
 func (e *env) setupChannel(tenantID, userID, channelType, eventType, channelURL string) int64 {
 	e.t.Helper()
 	e.mustExec(`INSERT INTO users (id) VALUES ($1) ON CONFLICT (id) DO NOTHING`, userID)
@@ -410,17 +351,15 @@ func (e *env) setupChannel(tenantID, userID, channelType, eventType, channelURL 
 		e.t.Fatalf("setupChannel: insert user_channel: %v", err)
 	}
 
-	// Gate 1: admin channel rule — goes through the real HTTP endpoint.
-	e.registerChannelRule(tenantID, eventType, channelType)
-
-	// Gates 2 & 3: no user-facing API yet; seed directly.
 	e.mustExec(
-		`INSERT INTO user_tenant_channel_mapping (user_id, tenant_id, channel_type, user_channel_id, is_enabled)
+		`INSERT INTO user_tenant_channel_mapping
+		     (user_id, tenant_id, channel_type, user_channel_id, is_enabled)
 		 VALUES ($1, $2, $3, $4, true) ON CONFLICT DO NOTHING`,
 		userID, tenantID, channelType, channelID,
 	)
 	e.mustExec(
-		`INSERT INTO user_event_subscriptions (user_id, tenant_id, event_type, channel_type, is_enabled)
+		`INSERT INTO user_event_subscriptions
+		     (user_id, tenant_id, event_type, channel_type, is_enabled)
 		 VALUES ($1, $2, $3, $4, true) ON CONFLICT DO NOTHING`,
 		userID, tenantID, eventType, channelType,
 	)

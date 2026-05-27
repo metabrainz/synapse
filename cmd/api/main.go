@@ -21,11 +21,7 @@ import (
 	"github.com/metabrainz/synapse/internal/ratelimit"
 	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store"
-	"github.com/metabrainz/synapse/internal/store/channels"
-	"github.com/metabrainz/synapse/internal/store/eventtypes"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
-	"github.com/metabrainz/synapse/internal/store/tenantrules"
-	"github.com/metabrainz/synapse/internal/store/tenants"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
 	"github.com/metabrainz/synapse/internal/store/usereventsubs"
 	"github.com/metabrainz/synapse/internal/store/users"
@@ -59,19 +55,14 @@ func main() {
 	}
 	defer rdb.Close()
 
-	tenantRepo := tenants.New(pool)
-	channelRepo := channels.New(pool)
 	subRepo := subscriptions.New(pool)
-	etRepo := eventtypes.New(pool)
-	rulesRepo := tenantrules.New(pool)
-
 	usersRepo := users.New(pool)
 	userChannels := userchannels.New(pool)
 	tenantMappings := usertenant.New(pool)
 	eventSubs := usereventsubs.New(pool)
 
-	if cfg.OAuth.ClientID == "" || cfg.OAuth.IntrospectionURL == "" {
-		slog.Error("oauth: client_id and introspection_url are required")
+	if cfg.OAuth.IntrospectionURL == "" || cfg.OAuth.ClientID == "" {
+		slog.Error("oauth: introspection_url and client_id are required")
 		os.Exit(1)
 	}
 	introspector := oauth.NewMBIntrospector(
@@ -81,15 +72,22 @@ func main() {
 		rdb,
 	)
 
-	reg := schema.New(schema.KnownTenants)
+	// Inject API keys from config into the static registry before building it.
+	tenants := schema.KnownTenants
+	for i := range tenants {
+		if tc, ok := cfg.Tenants[tenants[i].ID]; ok {
+			tenants[i].APIKey = tc.APIKey
+		}
+	}
+	reg := schema.New(tenants)
 
-	cache := fanout.NewCache(pool, subRepo, cfg.Postgres.DirectDSN)
+	cache := fanout.NewCache(pool, subRepo, cfg.Postgres.DirectDSN, reg)
 	if err := cache.Start(ctx); err != nil {
 		slog.Error("fanout cache", "err", err)
 		os.Exit(1)
 	}
 
-	fan := fanout.New(cache, adapter.MaxAttemptsFor)
+	fan := fanout.New(cache, adapter.MaxAttemptsFor, reg)
 	deduper := dedup.New(rdb)
 
 	var limiter *ratelimit.Limiter
@@ -99,7 +97,6 @@ func main() {
 
 	router := api.NewRouter(
 		api.Config{
-			AdminKey:     cfg.HTTP.AdminKey,
 			Introspector: introspector,
 			Health: api.HealthChecks{
 				Redis: func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
@@ -107,11 +104,6 @@ func main() {
 			Limiter: limiter,
 		},
 		pool,
-		tenantRepo,
-		channelRepo,
-		subRepo,
-		etRepo,
-		rulesRepo,
 		usersRepo,
 		userChannels,
 		tenantMappings,

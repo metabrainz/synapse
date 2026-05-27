@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/deliveries"
 	"github.com/metabrainz/synapse/internal/store/events"
@@ -42,8 +43,6 @@ type WorkerMessage struct {
 }
 
 // newWorkerMessage builds the outbox payload for one delivery.
-// deliveryID must come from the deliveries.InsertBatch call that precedes
-// any outbox write — the worker uses it to update delivery status.
 func newWorkerMessage(deliveryID int64, ev events.Event, ch subscriptions.ActiveChannel, maxAttempts int) WorkerMessage {
 	return WorkerMessage{
 		DeliveryID:    deliveryID,
@@ -67,11 +66,12 @@ func newWorkerMessage(deliveryID int64, ev events.Event, ch subscriptions.Active
 type Fanout struct {
 	subs        Lookup
 	maxAttempts func(channelType string) int
+	reg         *schema.Registry
 }
 
 // New creates a Fanout. Pass adapter.MaxAttemptsFor as maxAttempts in production.
-func New(subs Lookup, maxAttempts func(channelType string) int) *Fanout {
-	return &Fanout{subs: subs, maxAttempts: maxAttempts}
+func New(subs Lookup, maxAttempts func(channelType string) int, reg *schema.Registry) *Fanout {
+	return &Fanout{subs: subs, maxAttempts: maxAttempts, reg: reg}
 }
 
 // Preview returns the number of channels that would receive this event
@@ -81,6 +81,7 @@ func (f *Fanout) Preview(ctx context.Context, tenantID, userID, eventType string
 	if err != nil {
 		return 0, fmt.Errorf("list subscriptions: %w", err)
 	}
+	channels = filterAllowed(channels, f.reg.AllowedChannels(tenantID, eventType))
 	return len(channels), nil
 }
 
@@ -111,6 +112,8 @@ func (f *Fanout) FanBatch(ctx context.Context, q store.Querier, evs []events.Eve
 		if err != nil {
 			return 0, fmt.Errorf("list subscriptions: %w", err)
 		}
+		// Gate 1: filter by allowed channel types from the static registry.
+		subs = filterAllowed(subs, f.reg.AllowedChannels(ev.TenantID, ev.EventType))
 		for _, sub := range subs {
 			targets = append(targets, target{ev, sub, f.maxAttempts(sub.ChannelType)})
 		}
@@ -151,4 +154,22 @@ func (f *Fanout) FanBatch(ctx context.Context, q store.Querier, evs []events.Eve
 	}
 
 	return len(targets), nil
+}
+
+// filterAllowed applies Gate 1: keeps only channels whose type is in the allowed list.
+func filterAllowed(channels []subscriptions.ActiveChannel, allowed []string) []subscriptions.ActiveChannel {
+	if len(allowed) == 0 {
+		return nil
+	}
+	allow := make(map[string]struct{}, len(allowed))
+	for _, ch := range allowed {
+		allow[ch] = struct{}{}
+	}
+	out := channels[:0]
+	for _, ch := range channels {
+		if _, ok := allow[ch.ChannelType]; ok {
+			out = append(out, ch)
+		}
+	}
+	return out
 }

@@ -56,13 +56,16 @@ services:
     entrypoint: ["/bin/api"]
     environment:
       SYNAPSE_HTTP_PORT: "8080"
-      SYNAPSE_ADMIN_KEY: local-dev-key
       SYNAPSE_PG_HOST: postgres
       SYNAPSE_PG_USER: synapse
       SYNAPSE_PG_PASSWORD: synapse
       SYNAPSE_PG_DBNAME: synapse
       SYNAPSE_REDIS_ADDR: redis:6379
       SYNAPSE_RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      SYNAPSE_TENANTS_LISTENBRAINZ_API_KEY: local-dev-key
+      SYNAPSE_OAUTH_CLIENT_ID: ""
+      SYNAPSE_OAUTH_CLIENT_SECRET: ""
+      SYNAPSE_OAUTH_INTROSPECTION_URL: "https://musicbrainz.org/oauth2/introspect"
     ports:
       - "8080:8080"
     depends_on:

@@ -1,6 +1,5 @@
 http:
   port: 8080
-  admin_key: ""
 
 postgres:
   host: localhost
@@ -43,3 +42,7 @@ worker:
 rate_limit:
   burst: 100
   rate_per_sec: 50
+
+tenants:
+  listenbrainz:
+    api_key: ""

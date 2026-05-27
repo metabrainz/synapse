@@ -85,9 +85,6 @@ func TestMeChannels(t *testing.T) {
 		list := e.userDo("GET", "/v1/me/channels", nil, token)
 		var remaining []map[string]any
 		decodeJSON(t, list, &remaining)
-		// The "create channel" subtest already ran and added 1 channel;
-		// after this delete we should be back to 1 (the one from "create channel" subtest).
-		// But subtests share state, so just verify the deleted channel's ID is not present.
 		for _, ch := range remaining {
 			if gotID := int64(ch["id"].(float64)); gotID == id {
 				t.Fatalf("channel %d still present after delete", id)
@@ -123,10 +120,7 @@ func TestMeTenantChannels(t *testing.T) {
 	const userID = "bob"
 	e.stub.grant(token, userID)
 
-	tenantID := "lb-me-test"
-	e.createTenant(tenantID, "LB Me Test")
-	e.registerEventType(tenantID, "listen")
-	e.registerChannelRule(tenantID, "listen", "webhook")
+	tenantID := testTenantID
 
 	// Create a user channel first.
 	cr := e.userDo("POST", "/v1/me/channels", map[string]any{
@@ -220,9 +214,7 @@ func TestMeSubscriptions(t *testing.T) {
 	const userID = "carol"
 	e.stub.grant(token, userID)
 
-	tenantID := "lb-sub-test"
-	e.createTenant(tenantID, "LB Sub Test")
-	e.registerEventType(tenantID, "listen")
+	tenantID := testTenantID
 
 	t.Run("list empty subscriptions", func(t *testing.T) {
 		resp := e.userDo("GET", "/v1/me/tenants/"+tenantID+"/subscriptions", nil, token)
@@ -296,10 +288,8 @@ func TestMeFullFlow(t *testing.T) {
 	const userID = "dave"
 	e.stub.grant(token, userID)
 
-	tenantID := "lb-me-flow"
-	apiKey := e.createTenant(tenantID, "LB Me Flow")
-	e.registerEventType(tenantID, "listen")
-	e.registerChannelRule(tenantID, "listen", "webhook") // Gate 1
+	tenantID := testTenantID
+	apiKey := e.apiKey
 
 	// Gates 2 + 3 via /v1/me/* APIs.
 	cr := e.userDo("POST", "/v1/me/channels", map[string]any{

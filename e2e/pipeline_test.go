@@ -19,7 +19,6 @@ import (
 )
 
 // startIngestConsumer runs the AMQP ingest consumer in a goroutine.
-// Returns a cancel func that stops the consumer and waits for it to drain.
 func (e *env) startIngestConsumer() context.CancelFunc {
 	e.t.Helper()
 	ctx, cancel := context.WithCancel(e.ctx)
@@ -33,8 +32,7 @@ func (e *env) startIngestConsumer() context.CancelFunc {
 	return cancel
 }
 
-// publishIngestEvent publishes one message directly to the events.ingest
-// exchange, bypassing the HTTP API. Used to test the AMQP ingest path.
+// publishIngestEvent publishes one message directly to the events.ingest exchange.
 func publishIngestEvent(t *testing.T, amqpURL string, msg ingest.Message) {
 	t.Helper()
 	conn, err := amqp.Dial(amqpURL)
@@ -66,18 +64,16 @@ func publishIngestEvent(t *testing.T, amqpURL string, msg ingest.Message) {
 //	POST /v1/events → Postgres (event+delivery+outbox) → relay → RabbitMQ → worker → adapter
 func TestPipelineHTTPIngest(t *testing.T) {
 	e := setup(t)
-	apiKey := e.createTenant("pipe1", "Pipeline")
-	e.registerEventType("pipe1", "play.track")
-	e.setupWebhookChannel("pipe1", "user-1", "play.track", "https://example.com/hook")
-	e.waitForCacheWarm(apiKey, "user-1", "play.track")
+	e.setupWebhookChannel(testTenantID, "user-1", "listen", "https://example.com/hook")
+	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	resp := e.tenantDo("POST", "/v1/events",
 		map[string]any{
 			"user_id":    "user-1",
-			"event_type": "play.track",
-			"payload":    map[string]string{"artist": "Radiohead", "track": "Everything in Its Right Place"},
+			"event_type": "listen",
+			"payload":    testListenPayload(),
 		},
-		apiKey,
+		e.apiKey,
 	)
 	var out map[string]any
 	decodeJSON(t, resp, &out)
@@ -99,11 +95,11 @@ func TestPipelineHTTPIngest(t *testing.T) {
 
 	select {
 	case msg := <-received:
-		if msg.TenantID != "pipe1" {
-			t.Errorf("want tenant_id pipe1, got %q", msg.TenantID)
+		if msg.TenantID != testTenantID {
+			t.Errorf("want tenant_id %q, got %q", testTenantID, msg.TenantID)
 		}
-		if msg.EventType != "play.track" {
-			t.Errorf("want event_type play.track, got %q", msg.EventType)
+		if msg.EventType != "listen" {
+			t.Errorf("want event_type listen, got %q", msg.EventType)
 		}
 		if msg.EventID != eventID {
 			t.Errorf("want event_id %d, got %d", eventID, msg.EventID)
@@ -122,21 +118,19 @@ func TestPipelineHTTPIngest(t *testing.T) {
 //	events.ingest exchange → ingest consumer → Postgres → relay → RabbitMQ → worker → adapter
 func TestPipelineAMQPIngest(t *testing.T) {
 	e := setup(t)
-	apiKey := e.createTenant("pipe2", "PipelineAMQP")
-	e.registerEventType("pipe2", "submit.edit")
-	e.setupWebhookChannel("pipe2", "user-1", "submit.edit", "https://example.com/hook")
-	e.waitForCacheWarm(apiKey, "user-1", "submit.edit")
+	e.setupWebhookChannel(testTenantID, "user-1", "listen", "https://example.com/hook")
+	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	e.startIngestConsumer()
 
+	payload, _ := json.Marshal(testListenPayload())
 	publishIngestEvent(t, e.amqpURL, ingest.Message{
-		TenantID:  "pipe2",
+		TenantID:  testTenantID,
 		UserID:    "user-1",
-		EventType: "submit.edit",
-		Payload:   json.RawMessage(`{"edit_id":"99"}`),
+		EventType: "listen",
+		Payload:   json.RawMessage(payload),
 	})
 
-	// Wait for the ingest consumer to fan out and write the outbox row.
 	waitFor(t, 5*time.Second, func() bool {
 		msgs, _ := outbox.FetchPending(e.ctx, e.pool, 1)
 		return len(msgs) == 1
@@ -152,30 +146,29 @@ func TestPipelineAMQPIngest(t *testing.T) {
 
 	select {
 	case msg := <-received:
-		if msg.TenantID != "pipe2" {
-			t.Errorf("want tenant_id pipe2, got %q", msg.TenantID)
+		if msg.TenantID != testTenantID {
+			t.Errorf("want tenant_id %q, got %q", testTenantID, msg.TenantID)
 		}
-		if msg.EventType != "submit.edit" {
-			t.Errorf("want event_type submit.edit, got %q", msg.EventType)
+		if msg.EventType != "listen" {
+			t.Errorf("want event_type listen, got %q", msg.EventType)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timeout: worker never received the AMQP-ingested message")
 	}
 
-	// Confirm the API is consistent: list events shows it was recorded.
 	var count int
-	e.pool.QueryRow(e.ctx, `SELECT COUNT(*) FROM events WHERE tenant_id = 'pipe2'`).Scan(&count)
+	e.pool.QueryRow(e.ctx, `SELECT COUNT(*) FROM events WHERE tenant_id = $1`, testTenantID).Scan(&count)
 	if count != 1 {
 		t.Fatalf("want 1 event in DB, got %d", count)
 	}
 
-	// Check delivery is DELIVERED.
 	waitFor(t, 3*time.Second, func() bool {
 		var s string
 		e.pool.QueryRow(e.ctx,
 			`SELECT status FROM deliveries d
 			 JOIN events ev ON ev.id = d.event_id
-			 WHERE ev.tenant_id = 'pipe2'`,
+			 WHERE ev.tenant_id = $1`,
+			testTenantID,
 		).Scan(&s)
 		return s == deliveries.StatusDelivered
 	})

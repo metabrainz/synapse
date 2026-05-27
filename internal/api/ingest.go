@@ -50,6 +50,12 @@ func (h *ingestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		req.Payload = json.RawMessage(`{}`)
 	}
 
+	// Reject unknown (tenant, event_type) pairs before touching the DB.
+	if !h.reg.Has(tenant.ID, req.EventType) {
+		writeError(w, http.StatusBadRequest, "event type not registered for this tenant")
+		return
+	}
+
 	// Validate payload against the registered schema for this (tenant, event_type).
 	if err := h.reg.Validate(tenant.ID, req.EventType, req.Payload); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("payload validation failed: %s", err))
@@ -111,10 +117,6 @@ func (h *ingestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// PG unique constraint on idempotency_key — treat as deduplicated.
 		if store.IsUniqueViolation(err) {
 			writeJSON(w, http.StatusOK, map[string]any{"deduplicated": true})
-			return
-		}
-		if store.IsForeignKeyViolation(err) {
-			writeError(w, http.StatusBadRequest, "event type not registered for this tenant")
 			return
 		}
 		// Suppress noise from clients that cancelled mid-request

@@ -43,15 +43,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	reg := schema.New(schema.KnownTenants)
+
 	subRepo := subscriptions.New(pool)
-	cache := fanout.NewCache(pool, subRepo, cfg.Postgres.DirectDSN)
+	cache := fanout.NewCache(pool, subRepo, cfg.Postgres.DirectDSN, reg)
 	if err := cache.Start(ctx); err != nil {
 		slog.Error("fanout cache", "err", err)
 		os.Exit(1)
 	}
 
-	fan := fanout.New(cache, adapter.MaxAttemptsFor)
-	consumer := ingest.NewConsumer(pool, fan, schema.New(schema.KnownTenants))
+	fan := fanout.New(cache, adapter.MaxAttemptsFor, reg)
+	consumer := ingest.NewConsumer(pool, fan, reg)
 
 	slog.Info("ingest: starting", "workers", cfg.Ingest.Workers, "batch_size", cfg.Ingest.BatchSize, "drain_ms", cfg.Ingest.DrainMs)
 

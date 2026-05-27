@@ -13,11 +13,6 @@ import (
 	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/ratelimit"
 	"github.com/metabrainz/synapse/internal/schema"
-	"github.com/metabrainz/synapse/internal/store/channels"
-	"github.com/metabrainz/synapse/internal/store/eventtypes"
-	"github.com/metabrainz/synapse/internal/store/subscriptions"
-	"github.com/metabrainz/synapse/internal/store/tenantrules"
-	"github.com/metabrainz/synapse/internal/store/tenants"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
 	"github.com/metabrainz/synapse/internal/store/usereventsubs"
 	"github.com/metabrainz/synapse/internal/store/users"
@@ -31,7 +26,6 @@ type HealthChecks struct {
 }
 
 type Config struct {
-	AdminKey     string
 	Introspector oauth.Introspector
 	Health       HealthChecks
 	Limiter      *ratelimit.Limiter
@@ -40,11 +34,6 @@ type Config struct {
 func NewRouter(
 	cfg Config,
 	pool *pgxpool.Pool,
-	tenantRepo *tenants.Repo,
-	channelRepo *channels.Repo,
-	subRepo *subscriptions.Repo,
-	etRepo *eventtypes.Repo,
-	rulesRepo *tenantrules.Repo,
 	usersRepo *users.Repo,
 	userChannels *userchannels.Repo,
 	tenantMappings *usertenant.Repo,
@@ -79,26 +68,8 @@ func NewRouter(
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	// Admin routes
-	authMW, evictKey := middleware.NewAuth(tenantRepo)
-	admin := &adminHandler{repo: tenantRepo, evictKey: evictKey}
-
-	et := &eventTypesHandler{repo: etRepo}
-	cr := &channelRulesHandler{repo: rulesRepo}
-
-	r.With(middleware.RequireAdminKey(cfg.AdminKey)).Route("/v1/admin", func(r chi.Router) {
-		r.Post("/tenants", admin.create)
-		r.Get("/tenants", admin.list)
-		r.Post("/tenants/{id}/rotate-key", admin.rotateKey)
-		r.Post("/tenants/{id}/event-types", et.register)
-		r.Get("/tenants/{id}/event-types", et.list)
-		r.Delete("/tenants/{id}/event-types/{event_type}", et.delete)
-		r.Put("/tenants/{id}/channel-rules", cr.upsert)
-		r.Get("/tenants/{id}/channel-rules", cr.list)
-		r.Delete("/tenants/{id}/channel-rules/{event_type}/{channel_type}", cr.delete)
-	})
-
-	// Tenant-authenticated routes
+	// Tenant-authenticated routes (Surface A — tenant API key via static registry)
+	authMW := middleware.NewAuth(reg)
 	r.With(authMW).Route("/v1", func(r chi.Router) {
 		if cfg.Limiter != nil {
 			r.Use(cfg.Limiter.Middleware(func(r *http.Request) string {
@@ -112,23 +83,9 @@ func NewRouter(
 		ing := &ingestHandler{pool: pool, fan: fan, deduper: deduper, reg: reg}
 		r.Post("/events", ing.ServeHTTP)
 		r.Get("/events/{event_id}/deliveries", (&deliveriesHandler{pool: pool}).listByEvent)
-
-		// Channel management
-		ch := &channelsHandler{repo: channelRepo, pool: pool}
-		r.Route("/users/{user_id}/channels", func(r chi.Router) {
-			r.Post("/", ch.create)
-			r.Get("/", ch.list)
-			r.Delete("/{id}", ch.delete)
-
-			// Subscriptions nested under channels
-			sub := &subscriptionsHandler{repo: subRepo}
-			r.Post("/{id}/subscriptions", sub.create)
-			r.Get("/{id}/subscriptions", sub.list)
-			r.Delete("/{id}/subscriptions/{event_type}", sub.delete)
-		})
 	})
 
-	// User OAuth routes.
+	// User OAuth routes (Surface B — MetaBrainz OAuth token).
 	userMW := middleware.NewUserAuth(cfg.Introspector, usersRepo)
 	me := &meHandler{
 		channels:       userChannels,

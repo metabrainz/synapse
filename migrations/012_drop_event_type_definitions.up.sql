@@ -1,0 +1,3 @@
+BEGIN;
+DROP TABLE IF EXISTS event_type_definitions CASCADE;
+COMMIT;

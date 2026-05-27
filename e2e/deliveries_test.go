@@ -9,14 +9,12 @@ import (
 
 func TestDeliveriesListByEvent(t *testing.T) {
 	e := setup(t)
-	apiKey := e.createTenant("del1", "DeliveryList")
-	e.registerEventType("del1", "item.created")
-	e.setupWebhookChannel("del1", "user-1", "item.created", "https://example.com/hook")
-	e.waitForCacheWarm(apiKey, "user-1", "item.created")
+	e.setupWebhookChannel(testTenantID, "user-1", "listen", "https://example.com/hook")
+	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	resp := e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-1", "event_type": "item.created", "payload": map[string]string{"k": "v"}},
-		apiKey,
+		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		e.apiKey,
 	)
 	var out map[string]any
 	decodeJSON(t, resp, &out)
@@ -25,41 +23,38 @@ func TestDeliveriesListByEvent(t *testing.T) {
 	}
 	eventID := int64(out["event_id"].(float64))
 
-	// Deliveries endpoint returns the rows created by the fanout.
-	resp2 := e.tenantDo("GET", fmt.Sprintf("/v1/events/%d/deliveries", eventID), nil, apiKey)
-	var deliveries []map[string]any
-	decodeJSON(t, resp2, &deliveries)
+	resp2 := e.tenantDo("GET", fmt.Sprintf("/v1/events/%d/deliveries", eventID), nil, e.apiKey)
+	var dels []map[string]any
+	decodeJSON(t, resp2, &dels)
 	if resp2.StatusCode != 200 {
 		t.Fatalf("list deliveries: want 200, got %d", resp2.StatusCode)
 	}
-	if len(deliveries) != 1 {
-		t.Fatalf("want 1 delivery, got %d", len(deliveries))
+	if len(dels) != 1 {
+		t.Fatalf("want 1 delivery, got %d", len(dels))
 	}
-	if deliveries[0]["status"] != "PENDING" {
-		t.Fatalf("want status PENDING, got %v", deliveries[0]["status"])
+	if dels[0]["status"] != "PENDING" {
+		t.Fatalf("want status PENDING, got %v", dels[0]["status"])
 	}
-	if deliveries[0]["channel_type"] != "webhook" {
-		t.Fatalf("want channel_type webhook, got %v", deliveries[0]["channel_type"])
+	if dels[0]["channel_type"] != "webhook" {
+		t.Fatalf("want channel_type webhook, got %v", dels[0]["channel_type"])
 	}
 }
 
 func TestDeliveriesEmptyWhenNoSubscribers(t *testing.T) {
 	e := setup(t)
-	apiKey := e.createTenant("del2", "DeliveryEmpty")
-	e.registerEventType("del2", "empty.event")
 
 	resp := e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-1", "event_type": "empty.event", "payload": map[string]string{}},
-		apiKey,
+		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		e.apiKey,
 	)
 	var out map[string]any
 	decodeJSON(t, resp, &out)
 	eventID := int64(out["event_id"].(float64))
 
-	resp2 := e.tenantDo("GET", fmt.Sprintf("/v1/events/%d/deliveries", eventID), nil, apiKey)
-	var deliveries []map[string]any
-	decodeJSON(t, resp2, &deliveries)
-	if len(deliveries) != 0 {
-		t.Fatalf("no subscribers: want 0 deliveries, got %d", len(deliveries))
+	resp2 := e.tenantDo("GET", fmt.Sprintf("/v1/events/%d/deliveries", eventID), nil, e.apiKey)
+	var dels []map[string]any
+	decodeJSON(t, resp2, &dels)
+	if len(dels) != 0 {
+		t.Fatalf("no subscribers: want 0 deliveries, got %d", len(dels))
 	}
 }

@@ -10,17 +10,14 @@ import (
 
 func TestRelayPublishesAndClearsOutbox(t *testing.T) {
 	e := setup(t)
-	apiKey := e.createTenant("rel1", "RelayTest")
-	e.registerEventType("rel1", "order.placed")
-	e.setupWebhookChannel("rel1", "user-1", "order.placed", "https://example.com/hook")
-	e.waitForCacheWarm(apiKey, "user-1", "order.placed")
+	e.setupWebhookChannel(testTenantID, "user-1", "listen", "https://example.com/hook")
+	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-1", "event_type": "order.placed", "payload": map[string]string{}},
-		apiKey,
+		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		e.apiKey,
 	).Body.Close()
 
-	// After ingest, one row sits pending in the outbox.
 	pending, err := outbox.FetchPending(e.ctx, e.pool, 10)
 	if err != nil {
 		t.Fatalf("fetch pending: %v", err)
@@ -34,7 +31,6 @@ func TestRelayPublishesAndClearsOutbox(t *testing.T) {
 		t.Fatalf("relayTick: want 1 confirmed, got %d", published)
 	}
 
-	// After relay, the outbox row must be gone.
 	pending2, err := outbox.FetchPending(e.ctx, e.pool, 10)
 	if err != nil {
 		t.Fatalf("fetch pending after relay: %v", err)
@@ -54,22 +50,20 @@ func TestRelayIdleIsNoop(t *testing.T) {
 
 func TestRelayMultipleSubscribers(t *testing.T) {
 	e := setup(t)
-	apiKey := e.createTenant("rel2", "RelayMulti")
-	e.registerEventType("rel2", "ping")
 
 	// Two users subscribed to the same event type.
-	e.setupWebhookChannel("rel2", "user-1", "ping", "https://example.com/h1")
-	e.setupWebhookChannel("rel2", "user-2", "ping", "https://example.com/h2")
-	e.waitForCacheWarm(apiKey, "user-1", "ping")
-	e.waitForCacheWarm(apiKey, "user-2", "ping")
+	e.setupWebhookChannel(testTenantID, "user-1", "listen", "https://example.com/h1")
+	e.setupWebhookChannel(testTenantID, "user-2", "listen", "https://example.com/h2")
+	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
+	e.waitForCacheWarm(e.apiKey, "user-2", "listen")
 
 	e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-1", "event_type": "ping", "payload": map[string]string{}},
-		apiKey,
+		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		e.apiKey,
 	).Body.Close()
 	e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-2", "event_type": "ping", "payload": map[string]string{}},
-		apiKey,
+		map[string]any{"user_id": "user-2", "event_type": "listen", "payload": testListenPayload()},
+		e.apiKey,
 	).Body.Close()
 
 	pending, _ := outbox.FetchPending(e.ctx, e.pool, 10)

@@ -103,7 +103,6 @@ func applyEnv(cfg *Config) error {
 		return nil
 	}
 
-	str(&cfg.HTTP.AdminKey, "SYNAPSE_ADMIN_KEY")
 	str(&cfg.Postgres.Host, "SYNAPSE_PG_HOST")
 	str(&cfg.Postgres.User, "SYNAPSE_PG_USER")
 	str(&cfg.Postgres.Password, "SYNAPSE_PG_PASSWORD")
@@ -114,6 +113,31 @@ func applyEnv(cfg *Config) error {
 
 	if v := os.Getenv("SYNAPSE_PG_PGBOUNCER"); v == "true" || v == "1" {
 		cfg.Postgres.PgBouncer = true
+	}
+
+	// Tenant API keys: SYNAPSE_TENANTS_{TENANT_ID}_API_KEY
+	// e.g. SYNAPSE_TENANTS_LISTENBRAINZ_API_KEY
+	if cfg.Tenants == nil {
+		cfg.Tenants = make(map[string]TenantConfig)
+	}
+	for _, env := range os.Environ() {
+		const prefix = "SYNAPSE_TENANTS_"
+		const suffix = "_API_KEY"
+		if !strings.HasPrefix(env, prefix) {
+			continue
+		}
+		kv := strings.SplitN(env, "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		key := kv[0]
+		if !strings.HasSuffix(key, suffix) {
+			continue
+		}
+		tenantID := strings.ToLower(key[len(prefix) : len(key)-len(suffix)])
+		tc := cfg.Tenants[tenantID]
+		tc.APIKey = kv[1]
+		cfg.Tenants[tenantID] = tc
 	}
 
 	if err := errors.Join(

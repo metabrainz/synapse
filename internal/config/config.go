@@ -6,15 +6,21 @@ package config
 import "fmt"
 
 type Config struct {
-	Postgres  PostgresConfig  `yaml:"postgres"`
-	Redis     RedisConfig     `yaml:"redis"`
-	RabbitMQ  RabbitMQConfig  `yaml:"rabbitmq"`
-	HTTP      HTTPConfig      `yaml:"http"`
-	Worker    WorkerConfig    `yaml:"worker"`
-	Relay     RelayConfig     `yaml:"relay"`
-	Ingest    IngestConfig    `yaml:"ingest"`
-	RateLimit RateLimitConfig `yaml:"rate_limit"`
-	OAuth     OAuthConfig     `yaml:"oauth"`
+	Postgres  PostgresConfig            `yaml:"postgres"`
+	Redis     RedisConfig               `yaml:"redis"`
+	RabbitMQ  RabbitMQConfig            `yaml:"rabbitmq"`
+	HTTP      HTTPConfig                `yaml:"http"`
+	Worker    WorkerConfig              `yaml:"worker"`
+	Relay     RelayConfig               `yaml:"relay"`
+	Ingest    IngestConfig              `yaml:"ingest"`
+	RateLimit RateLimitConfig           `yaml:"rate_limit"`
+	OAuth     OAuthConfig               `yaml:"oauth"`
+	Tenants   map[string]TenantConfig   `yaml:"tenants"`
+}
+
+// TenantConfig holds per-tenant secrets loaded from the environment or config file.
+type TenantConfig struct {
+	APIKey string `yaml:"api_key"`
 }
 
 type OAuthConfig struct {
@@ -61,8 +67,7 @@ type RabbitMQConfig struct {
 }
 
 type HTTPConfig struct {
-	Port     int    `yaml:"port"`
-	AdminKey string `yaml:"admin_key"`
+	Port int `yaml:"port"`
 	// DBConns is the maximum number of Postgres connections the API pool may hold.
 	// Each concurrent HTTP request can use one connection, so size this to the
 	// expected concurrent request peak, not the total request rate.

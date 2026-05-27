@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 )
 
@@ -31,12 +32,13 @@ type Cache struct {
 	subs      *subscriptions.Repo
 	pool      *pgxpool.Pool
 	listenDSN string // direct Postgres DSN for LISTEN/NOTIFY, bypasses PgBouncer
+	reg       *schema.Registry
 }
 
 // NewCache creates a cache backed by pool for query traffic.
 // listenDSN must be a direct Postgres DSN (not PgBouncer) because LISTEN/NOTIFY
 // requires a persistent session that PgBouncer transaction mode doesn't support.
-func NewCache(pool *pgxpool.Pool, subs *subscriptions.Repo, listenDSN string) *Cache {
+func NewCache(pool *pgxpool.Pool, subs *subscriptions.Repo, listenDSN string, reg *schema.Registry) *Cache {
 	if listenDSN == "" {
 		listenDSN = pool.Config().ConnConfig.ConnString()
 	}
@@ -46,6 +48,7 @@ func NewCache(pool *pgxpool.Pool, subs *subscriptions.Repo, listenDSN string) *C
 		subs:      subs,
 		pool:      pool,
 		listenDSN: listenDSN,
+		reg:       reg,
 	}
 }
 
@@ -84,6 +87,10 @@ func (c *Cache) rebuild(ctx context.Context) error {
 	wildcard := make(map[string][]subscriptions.ActiveChannel)
 
 	for _, e := range entries {
+		// Gate 1: skip channel types not allowed by the static registry.
+		if !c.reg.IsAllowed(e.TenantID, e.EventType, e.ChannelType) {
+			continue
+		}
 		ac := e.ActiveChannel
 		if e.EventType == "*" {
 			key := e.TenantID + ":" + e.UserID

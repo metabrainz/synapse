@@ -8,6 +8,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
 )
@@ -15,21 +16,24 @@ import (
 //go:embed schemas/**/*.json
 var schemaFS embed.FS
 
-// EventType pairs an event type name with its compiled validator.
+// EventType pairs a name with its compiled validator and the channel types Gate 1 permits.
 type EventType struct {
-	Name string
+	Name            string
+	AllowedChannels []string
 }
 
-// Tenant groups event types by tenant ID.
+// Tenant is a static tenant definition. APIKey is injected at startup from config.
 type Tenant struct {
 	ID         string
+	APIKey     string
 	EventTypes []EventType
 }
 
-// Registry validates payloads for known (tenant, event_type) pairs.
+// Registry validates payloads and answers routing questions for known tenants.
 type Registry struct {
-	// m maps "tenantID:eventType" → compiled schema.
-	m map[string]*jsonschema.Schema
+	m       map[string]*jsonschema.Schema // "tenantID:eventType" → compiled schema
+	tenants map[string]*Tenant            // tenantID → tenant
+	byKey   map[string]*Tenant            // apiKey → tenant
 }
 
 // New builds a Registry from the provided tenant definitions.
@@ -38,8 +42,15 @@ type Registry struct {
 func New(tenants []Tenant) *Registry {
 	compiler := jsonschema.NewCompiler()
 	m := make(map[string]*jsonschema.Schema)
+	byID := make(map[string]*Tenant, len(tenants))
+	byKey := make(map[string]*Tenant, len(tenants))
 
-	for _, t := range tenants {
+	for i := range tenants {
+		t := &tenants[i]
+		byID[t.ID] = t
+		if t.APIKey != "" {
+			byKey[t.APIKey] = t
+		}
 		for _, et := range t.EventTypes {
 			path := fmt.Sprintf("schemas/%s/%s.json", t.ID, et.Name)
 			data, err := schemaFS.ReadFile(path)
@@ -56,7 +67,7 @@ func New(tenants []Tenant) *Registry {
 			m[t.ID+":"+et.Name] = compiled
 		}
 	}
-	return &Registry{m: m}
+	return &Registry{m: m, tenants: byID, byKey: byKey}
 }
 
 // Validate checks payload against the registered schema for (tenantID, eventType).
@@ -72,4 +83,44 @@ func (r *Registry) Validate(tenantID, eventType string, payload json.RawMessage)
 		return fmt.Errorf("invalid JSON: %w", err)
 	}
 	return s.Validate(v)
+}
+
+// Has reports whether (tenantID, eventType) is registered.
+func (r *Registry) Has(tenantID, eventType string) bool {
+	_, ok := r.m[tenantID+":"+eventType]
+	return ok
+}
+
+// IsAllowed reports whether channelType passes Gate 1 for (tenantID, eventType).
+func (r *Registry) IsAllowed(tenantID, eventType, channelType string) bool {
+	t, ok := r.tenants[tenantID]
+	if !ok {
+		return false
+	}
+	for _, et := range t.EventTypes {
+		if et.Name == eventType {
+			return slices.Contains(et.AllowedChannels, channelType)
+		}
+	}
+	return false
+}
+
+// AllowedChannels returns the channel types Gate 1 permits for (tenantID, eventType).
+func (r *Registry) AllowedChannels(tenantID, eventType string) []string {
+	t, ok := r.tenants[tenantID]
+	if !ok {
+		return nil
+	}
+	for _, et := range t.EventTypes {
+		if et.Name == eventType {
+			return et.AllowedChannels
+		}
+	}
+	return nil
+}
+
+// LookupByAPIKey returns the tenant for the given API key, or false if unknown.
+func (r *Registry) LookupByAPIKey(apiKey string) (*Tenant, bool) {
+	t, ok := r.byKey[apiKey]
+	return t, ok
 }

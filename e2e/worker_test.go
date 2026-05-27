@@ -55,14 +55,12 @@ func publishToDeliveryExchange(t *testing.T, amqpURL, routingKey string, body []
 
 func TestWorkerSuccess(t *testing.T) {
 	e := setup(t)
-	apiKey := e.createTenant("wk1", "WorkerSuccess")
-	e.registerEventType("wk1", "job.done")
-	e.setupWebhookChannel("wk1", "user-1", "job.done", "https://example.com/hook")
-	e.waitForCacheWarm(apiKey, "user-1", "job.done")
+	e.setupWebhookChannel(testTenantID, "user-1", "listen", "https://example.com/hook")
+	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	resp := e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-1", "event_type": "job.done", "payload": map[string]string{}},
-		apiKey,
+		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		e.apiKey,
 	)
 	var out map[string]any
 	decodeJSON(t, resp, &out)
@@ -71,7 +69,7 @@ func TestWorkerSuccess(t *testing.T) {
 	e.relayTick()
 
 	e.startWorker("webhook", adapterFunc(func(_ context.Context, _ fanout.WorkerMessage) error {
-		return nil // always succeeds
+		return nil
 	}))
 
 	waitFor(t, 5*time.Second, func() bool {
@@ -81,14 +79,12 @@ func TestWorkerSuccess(t *testing.T) {
 
 func TestWorkerRetryOnFailure(t *testing.T) {
 	e := setup(t)
-	apiKey := e.createTenant("wk2", "WorkerRetry")
-	e.registerEventType("wk2", "task.run")
-	e.setupWebhookChannel("wk2", "user-1", "task.run", "https://example.com/hook")
-	e.waitForCacheWarm(apiKey, "user-1", "task.run")
+	e.setupWebhookChannel(testTenantID, "user-1", "listen", "https://example.com/hook")
+	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	resp := e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-1", "event_type": "task.run", "payload": map[string]string{}},
-		apiKey,
+		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		e.apiKey,
 	)
 	var out map[string]any
 	decodeJSON(t, resp, &out)
@@ -100,7 +96,6 @@ func TestWorkerRetryOnFailure(t *testing.T) {
 		return errors.New("adapter temporarily unavailable")
 	}))
 
-	// Failure → RETRYING (worker schedules retry and acks the original).
 	waitFor(t, 5*time.Second, func() bool {
 		return e.deliveryStatus(eventID) == deliveries.StatusRetrying
 	})
@@ -108,17 +103,14 @@ func TestWorkerRetryOnFailure(t *testing.T) {
 
 func TestWorkerDedup(t *testing.T) {
 	e := setup(t)
-	apiKey := e.createTenant("wk3", "WorkerDedup")
-	e.registerEventType("wk3", "dedup.event")
-	e.setupWebhookChannel("wk3", "user-1", "dedup.event", "https://example.com/hook")
-	e.waitForCacheWarm(apiKey, "user-1", "dedup.event")
+	e.setupWebhookChannel(testTenantID, "user-1", "listen", "https://example.com/hook")
+	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-1", "event_type": "dedup.event", "payload": map[string]string{}},
-		apiKey,
+		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		e.apiKey,
 	).Body.Close()
 
-	// Capture the outbox payload before relaying so we can re-inject it later.
 	pending, err := outbox.FetchPending(e.ctx, e.pool, 1)
 	if err != nil || len(pending) == 0 {
 		t.Fatalf("no pending outbox rows")
@@ -134,14 +126,10 @@ func TestWorkerDedup(t *testing.T) {
 		return nil
 	}))
 
-	// Wait for the first delivery to complete (adapter called once).
 	waitFor(t, 5*time.Second, func() bool { return callCount.Load() == 1 })
 
-	// Re-inject the same message (same delivery_id, same attempt) to simulate
-	// an at-least-once redelivery. The deduper must suppress the second call.
 	publishToDeliveryExchange(t, e.amqpURL, routingKey, msgBody)
 
-	// Give the worker time to receive and (skip) the duplicate.
 	time.Sleep(300 * time.Millisecond)
 	if n := callCount.Load(); n != 1 {
 		t.Fatalf("dedup: adapter should be called exactly once, got %d", n)
@@ -150,15 +138,12 @@ func TestWorkerDedup(t *testing.T) {
 
 func TestWorkerMessageFields(t *testing.T) {
 	e := setup(t)
-	apiKey := e.createTenant("wk4", "WorkerFields")
-	e.registerEventType("wk4", "check.fields")
-	e.setupWebhookChannel("wk4", "user-1", "check.fields", "https://example.com/hook")
-	e.waitForCacheWarm(apiKey, "user-1", "check.fields")
+	e.setupWebhookChannel(testTenantID, "user-1", "listen", "https://example.com/hook")
+	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
-	payload := map[string]string{"track": "Karma Police"}
 	e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-1", "event_type": "check.fields", "payload": payload},
-		apiKey,
+		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		e.apiKey,
 	).Body.Close()
 	e.relayTick()
 
@@ -170,19 +155,19 @@ func TestWorkerMessageFields(t *testing.T) {
 
 	select {
 	case msg := <-received:
-		if msg.TenantID != "wk4" {
-			t.Errorf("want tenant_id wk4, got %q", msg.TenantID)
+		if msg.TenantID != testTenantID {
+			t.Errorf("want tenant_id %q, got %q", testTenantID, msg.TenantID)
 		}
 		if msg.UserID != "user-1" {
 			t.Errorf("want user_id user-1, got %q", msg.UserID)
 		}
-		if msg.EventType != "check.fields" {
-			t.Errorf("want event_type check.fields, got %q", msg.EventType)
+		if msg.EventType != "listen" {
+			t.Errorf("want event_type listen, got %q", msg.EventType)
 		}
-		var got map[string]string
+		var got map[string]any
 		json.Unmarshal(msg.Payload, &got)
-		if got["track"] != "Karma Police" {
-			t.Errorf("payload mismatch: want Karma Police, got %q", got["track"])
+		if _, ok := got["listened_at"]; !ok {
+			t.Errorf("payload missing listened_at: %v", got)
 		}
 		if msg.Attempt != 0 {
 			t.Errorf("want attempt 0, got %d", msg.Attempt)
