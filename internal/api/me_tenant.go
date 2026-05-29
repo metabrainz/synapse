@@ -29,6 +29,15 @@ func (h *meHandler) assignTenantChannel(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if !h.reg.HasTenant(tenantID) {
+		writeError(w, http.StatusNotFound, "tenant not found")
+		return
+	}
+	if !h.reg.HasChannelType(tenantID, channelType) {
+		writeError(w, http.StatusBadRequest, "channel_type not supported for this tenant")
+		return
+	}
+
 	if err := h.tenantMappings.Upsert(r.Context(), usertenant.Mapping{
 		UserID:        uid,
 		TenantID:      tenantID,

@@ -26,7 +26,7 @@ func (h *meHandler) listSubscriptions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, subs)
 }
 
-// POST /v1/me/tenants/{tenant_id}/subscriptions/{event_type}/{channel_type}
+// PUT /v1/me/tenants/{tenant_id}/subscriptions/{event_type}/{channel_type}
 func (h *meHandler) subscribe(w http.ResponseWriter, r *http.Request) {
 	uid, ok := requireUser(w, r)
 	if !ok {
@@ -35,6 +35,15 @@ func (h *meHandler) subscribe(w http.ResponseWriter, r *http.Request) {
 	tenantID := chi.URLParam(r, "tenant_id")
 	eventType := chi.URLParam(r, "event_type")
 	channelType := chi.URLParam(r, "channel_type")
+
+	if !h.reg.HasTenant(tenantID) {
+		writeError(w, http.StatusNotFound, "tenant not found")
+		return
+	}
+	if !h.reg.IsAllowed(tenantID, eventType, channelType) {
+		writeError(w, http.StatusBadRequest, "event_type or channel_type not permitted for this tenant")
+		return
+	}
 
 	if err := h.subscriptions.Upsert(r.Context(), usereventsubs.Subscription{
 		UserID:      uid,

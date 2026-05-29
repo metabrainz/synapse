@@ -119,6 +119,26 @@ func (r *Registry) AllowedChannels(tenantID, eventType string) []string {
 	return nil
 }
 
+// HasTenant reports whether tenantID is registered.
+func (r *Registry) HasTenant(tenantID string) bool {
+	_, ok := r.tenants[tenantID]
+	return ok
+}
+
+// HasChannelType reports whether channelType appears in any event type's AllowedChannels for tenantID.
+func (r *Registry) HasChannelType(tenantID, channelType string) bool {
+	t, ok := r.tenants[tenantID]
+	if !ok {
+		return false
+	}
+	for _, et := range t.EventTypes {
+		if slices.Contains(et.AllowedChannels, channelType) {
+			return true
+		}
+	}
+	return false
+}
+
 // EventTypes returns the event types registered for tenantID, or nil if unknown.
 func (r *Registry) EventTypes(tenantID string) []EventType {
 	t, ok := r.tenants[tenantID]
