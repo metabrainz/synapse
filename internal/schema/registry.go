@@ -119,6 +119,15 @@ func (r *Registry) AllowedChannels(tenantID, eventType string) []string {
 	return nil
 }
 
+// EventTypes returns the event types registered for tenantID, or nil if unknown.
+func (r *Registry) EventTypes(tenantID string) []EventType {
+	t, ok := r.tenants[tenantID]
+	if !ok {
+		return nil
+	}
+	return t.EventTypes
+}
+
 // LookupByAPIKey returns the tenant for the given API key, or false if unknown.
 func (r *Registry) LookupByAPIKey(apiKey string) (*Tenant, bool) {
 	t, ok := r.byKey[apiKey]

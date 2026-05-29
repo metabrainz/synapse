@@ -91,12 +91,15 @@ func NewRouter(
 		channels:       userChannels,
 		tenantMappings: tenantMappings,
 		subscriptions:  subscriptions,
+		reg:            reg,
 	}
 
 	r.With(userMW).Route("/v1/me", func(r chi.Router) {
 		r.Get("/channels", me.listChannels)
 		r.Post("/channels", me.createChannel)
 		r.Delete("/channels/{id}", me.deleteChannel)
+
+		r.Get("/tenants/{tenant_id}/event-types", me.listTenantEventTypes)
 
 		r.Get("/tenants/{tenant_id}/channels", me.listTenantChannels)
 		r.Put("/tenants/{tenant_id}/channels/{channel_type}", me.assignTenantChannel)

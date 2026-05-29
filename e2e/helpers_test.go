@@ -50,9 +50,9 @@ type env struct {
 	pool    *pgxpool.Pool
 	server  *httptest.Server
 	amqpURL string
-	apiKey  string         // static tenant API key for testTenantID
-	fan     *fanout.Fanout // shared with the HTTP server — cache-backed in tests
-	deduper *dedup.Deduper // shared with workers — backed by the test Redis instance
+	apiKey  string              // static tenant API key for testTenantID
+	fan     *fanout.Fanout      // shared with the HTTP server — cache-backed in tests
+	deduper *dedup.Deduper      // shared with workers — backed by the test Redis instance
 	pub     *rabbitmq.Publisher // long-lived publisher used by relayTick
 	stub    *stubIntrospector
 }

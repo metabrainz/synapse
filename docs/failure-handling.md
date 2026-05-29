@@ -47,9 +47,9 @@ Redis is used for three things. All three fail open.
 | **Rate limiting**         | `Allow()` returns an error → middleware lets the request through. Traffic is unthrottled until Redis recovers.                                                                                                             |
 | **Delivery dedup**        | `Seen()` returns an error → dedup is skipped → delivery proceeds. If RabbitMQ redelivers the same message, Postgres write is the backstop (delivery status is already `DELIVERED`; the duplicate write is a no-op update). |
 | **Idempotency key check** | Pre-check skipped → request proceeds. If the key was already processed, the Postgres unique constraint on `(tenant_id, idempotency_key)` catches the duplicate and returns a deduplicated response.                        |
+| **OAuth token cache**     | Cache miss on every request → every Surface B call hits the MB introspection endpoint directly. MB becomes the bottleneck. Fails open: requests still succeed as long as MB is reachable.                                  |
 
-
-**Auth cache is in-memory**, not Redis — it is unaffected by Redis failures.
+**Tenant auth is unaffected**: Surface A auth is an O(1) lookup against the static in-memory registry — no Redis involved.
 
 **Recovery**: automatic. All three features resume normal behaviour as soon as Redis is reachable again.
 

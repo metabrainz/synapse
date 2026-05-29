@@ -6,16 +6,16 @@ package config
 import "fmt"
 
 type Config struct {
-	Postgres  PostgresConfig            `yaml:"postgres"`
-	Redis     RedisConfig               `yaml:"redis"`
-	RabbitMQ  RabbitMQConfig            `yaml:"rabbitmq"`
-	HTTP      HTTPConfig                `yaml:"http"`
-	Worker    WorkerConfig              `yaml:"worker"`
-	Relay     RelayConfig               `yaml:"relay"`
-	Ingest    IngestConfig              `yaml:"ingest"`
-	RateLimit RateLimitConfig           `yaml:"rate_limit"`
-	OAuth     OAuthConfig               `yaml:"oauth"`
-	Tenants   map[string]TenantConfig   `yaml:"tenants"`
+	Postgres  PostgresConfig          `yaml:"postgres"`
+	Redis     RedisConfig             `yaml:"redis"`
+	RabbitMQ  RabbitMQConfig          `yaml:"rabbitmq"`
+	HTTP      HTTPConfig              `yaml:"http"`
+	Worker    WorkerConfig            `yaml:"worker"`
+	Relay     RelayConfig             `yaml:"relay"`
+	Ingest    IngestConfig            `yaml:"ingest"`
+	RateLimit RateLimitConfig         `yaml:"rate_limit"`
+	OAuth     OAuthConfig             `yaml:"oauth"`
+	Tenants   map[string]TenantConfig `yaml:"tenants"`
 }
 
 // TenantConfig holds per-tenant secrets loaded from the environment or config file.

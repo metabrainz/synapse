@@ -35,10 +35,11 @@ cmd/ingest  ──── one transaction ────▶  Postgres
 
 ### `cmd/api` — Management plane
 
-REST API for tenant, channel, subscription, and event-type CRUD. Also accepts direct event ingestion via `POST /v1/events` for low-volume use cases.
+Serves two authentication surfaces:
 
-- Tenant-authenticated routes rate-limited per tenant via a Redis token bucket.
-- Auth results are cached in-memory for 30s to keep auth off the hot DB path.
+**Surface A — tenant API key** (`/v1/events`, `/v1/events/{id}/deliveries`): internal services publish events and query delivery status. Auth is an O(1) map lookup against the static registry loaded at startup — no DB or cache involved. Routes are rate-limited per tenant via a Redis token bucket.
+
+**Surface B — MetaBrainz OAuth token** (`/v1/me/*`): end-users manage their own channels and subscriptions. Each request introspects the bearer token against the MB OAuth endpoint; results are cached in Redis (TTL = min(token expiry, 15 min)) to keep the MB endpoint off the hot path.
 
 ### `cmd/ingest` — Ingest consumer
 
@@ -74,9 +75,29 @@ Runs periodically (or once via cron) to prune stale data:
 
 ---
 
+## Static registry
+
+Tenant configuration (API keys, allowed event types, and which channel types each event type may fan out to) is defined as Go code and loaded at startup into an in-memory map. There is no DB lookup for tenant auth or event-type validation — resolution is an O(1) map access.
+
+Adding a new tenant or event type requires a code change and a redeploy. This is intentional: tenants are internal services, not external customers.
+
+---
+
+## Three-gate fanout
+
+When the ingest consumer processes an event, three gates decide which deliveries to create:
+
+1. **Static registry** (`schema.Registry.IsAllowed`) — is this `(tenant_id, event_type, channel_type)` combination declared in config? Rejects unknown combos at zero DB cost.
+2. **Tenant-channel mapping** (`user_tenant_channel_mapping`) — has the user assigned a channel of that type for this tenant?
+3. **Event subscription** (`user_event_subscriptions`) — has the user subscribed to this event type on that channel type?
+
+A delivery row is created only when all three gates pass. The subscription cache (below) holds gates 2 and 3 in memory.
+
+---
+
 ## Subscription cache
 
-The ingest consumer resolves subscriptions against an **in-memory cache** rather than querying Postgres per event. This keeps the DB out of the hot ingest path.
+The ingest consumer resolves user subscriptions against an **in-memory cache** rather than querying Postgres per event. This keeps the DB out of the hot ingest path.
 
 - On startup: full table scan populates the cache (`subscriptions.ListAllForCache`).
 - On subscription change: Postgres sends a `NOTIFY subscription_changes`. The cache rebuilds immediately on receipt.
