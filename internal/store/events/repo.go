@@ -25,14 +25,14 @@ type Event struct {
 }
 
 // Insert writes an event inside a transaction. Always called via store.WithTx.
-func Insert(ctx context.Context, q store.Querier, event Event) (int64, error) {
-	var id int64
+// Returns the event with ID and CreatedAt populated from the DB.
+func Insert(ctx context.Context, q store.Querier, event Event) (Event, error) {
 	err := q.QueryRow(ctx,
 		`INSERT INTO events (tenant_id, user_id, event_type, payload, idempotency_key)
-		 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		 VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
 		event.TenantID, event.UserID, event.EventType, event.Payload, event.IdempotencyKey,
-	).Scan(&id)
-	return id, err
+	).Scan(&event.ID, &event.CreatedAt)
+	return event, err
 }
 
 // InsertBatch inserts n events in one round-trip by expanding parallel typed

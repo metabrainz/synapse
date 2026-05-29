@@ -161,11 +161,10 @@ func (c *Consumer) handleEach(ctx context.Context, evs []events.Event) error {
 func (c *Consumer) processOne(ctx context.Context, ev events.Event) error {
 	var count int
 	err := store.WithTx(ctx, c.pool, func(q store.Querier) error {
-		id, err := events.Insert(ctx, q, ev)
+		ev, err := events.Insert(ctx, q, ev)
 		if err != nil {
 			return err
 		}
-		ev.ID = id
 		n, err := c.fan.Fan(ctx, q, ev)
 		if err != nil {
 			return err

@@ -99,12 +99,11 @@ func (h *ingestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			IdempotencyKey: req.IdempotencyKey,
 		}
 
-		id, err := events.Insert(ctx, q, ev)
+		ev, err := events.Insert(ctx, q, ev)
 		if err != nil {
 			return err
 		}
-		eventID = id
-		ev.ID = id
+		eventID = ev.ID
 
 		count, err := h.fan.Fan(ctx, q, ev)
 		if err != nil {
