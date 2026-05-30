@@ -1,6 +1,6 @@
 # Synapse Architecture
 
-Synapse is an internal event fan-out system. Internal services publish events; Synapse fans them out to subscriber channels (webhooks, and more to come).
+Synapse is an internal event fan-out and notification system for MetaBrainz. Internal services publish events; Synapse fans them out to subscriber channels — webhooks, Telegram, and more — with at-least-once delivery guarantees.
 
 ---
 
@@ -26,7 +26,7 @@ cmd/ingest  ──── one transaction ────▶  Postgres
                                                                                         │
                                                                                         │  consume
                                                                                         ▼
-                                                                                   cmd/worker ──▶  Channel adapter (webhook / email / …)
+                                                                                   cmd/worker ──▶  Channel adapter (webhook / telegram / …)
 ```
 
 ---
@@ -39,7 +39,7 @@ Serves two authentication surfaces:
 
 **Surface A — tenant API key** (`/v1/events`, `/v1/events/{id}/deliveries`): internal services publish events and query delivery status. Auth is an O(1) map lookup against the static registry loaded at startup — no DB or cache involved. Routes are rate-limited per tenant via a Redis token bucket.
 
-**Surface B — MetaBrainz OAuth token** (`/v1/me/*`): end-users manage their own channels and subscriptions. Each request introspects the bearer token against the MB OAuth endpoint; results are cached in Redis (TTL = min(token expiry, 15 min)) to keep the MB endpoint off the hot path.
+**Surface B — MetaBrainz OAuth token** (`/v1/me/`*): end-users manage their own channels and subscriptions. Each request introspects the bearer token against the MB OAuth endpoint; results are cached in Redis (TTL = min(token expiry, 15 min)) to keep the MB endpoint off the hot path.
 
 ### `cmd/ingest` — Ingest consumer
 
@@ -123,3 +123,44 @@ Queue:    events.ingest
 ```
 
 The retry loop is entirely within RabbitMQ: the worker publishes to `deliveries.retry` with a per-message TTL; when that TTL expires, RabbitMQ routes the message back to `deliveries.{type}` via the DLX. New channel types get their own queue set automatically at startup — adding a connector requires no topology changes.
+
+---
+
+## Channel adapters
+
+Each channel type is implemented as an adapter sub-package under `internal/adapter/`. All adapters satisfy the same `Adapter` interface (`Deliver`, `MaxAttempts`). Optional interfaces extend behaviour:
+
+- **`Starter`** — called once at startup by `adapter.Build`. Used for credential validation and webhook registration (e.g. Telegram calls `setWebhook`).
+- **`RouteProvider`** — mounts adapter-owned HTTP routes into the API server at startup. Used for inbound webhooks and user-facing connect flows.
+
+Adding a new channel type means creating a new sub-package and registering it in `adapter.Build` — no changes to the fanout, relay, or ingest layers.
+
+### Telegram
+
+The Telegram adapter (`internal/adapter/telegram`) delivers messages via the Telegram Bot API.
+
+**Connect flow** — users connect their Telegram account without manually finding a chat ID:
+
+```
+User clicks "Connect Telegram" in UI
+      │
+      │  GET /v1/me/channels/telegram/connect
+      ▼
+API generates a one-time token → stores in Redis (5 min TTL)
+      │
+      │  returns deep link: https://t.me/BotName?start=<token>
+      ▼
+User opens link → taps Start in Telegram bot
+      │
+      │  POST /internal/telegram/webhook  (Telegram → Synapse)
+      ▼
+Synapse looks up token → creates user_channel row → stores channel_id in Redis
+      │
+      │  UI polls GET /v1/me/channels/telegram/connect/<token>
+      ▼
+UI shows channel as connected
+```
+
+**Message formatting** — each event type defines a message template in `internal/adapter/telegram/templates.go`. Unknown event types fall back to a plain JSON dump. Templates are compiled at startup; a bad template panics immediately rather than at delivery time.
+
+**Webhook verification** — inbound webhook requests are validated against `X-Telegram-Bot-Api-Secret-Token`. The secret is set when registering the webhook via `setWebhook` at startup.
