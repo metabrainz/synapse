@@ -15,6 +15,7 @@ type Config struct {
 	Ingest    IngestConfig            `yaml:"ingest"`
 	RateLimit RateLimitConfig         `yaml:"rate_limit"`
 	OAuth     OAuthConfig             `yaml:"oauth"`
+	Telegram  TelegramConfig          `yaml:"telegram"`
 	Tenants   map[string]TenantConfig `yaml:"tenants"`
 }
 
@@ -27,6 +28,12 @@ type OAuthConfig struct {
 	ClientID         string `yaml:"client_id"`
 	ClientSecret     string `yaml:"client_secret"`
 	IntrospectionURL string `yaml:"introspection_url"`
+}
+
+type TelegramConfig struct {
+	BotToken      string `yaml:"bot_token"`
+	WebhookURL    string `yaml:"webhook_url"`
+	WebhookSecret string `yaml:"webhook_secret"`
 }
 
 type PostgresConfig struct {

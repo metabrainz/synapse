@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/metabrainz/synapse/internal/adapter"
 	"github.com/metabrainz/synapse/internal/api/middleware"
 	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/fanout"
@@ -17,6 +18,7 @@ import (
 	"github.com/metabrainz/synapse/internal/store/usereventsubs"
 	"github.com/metabrainz/synapse/internal/store/users"
 	"github.com/metabrainz/synapse/internal/store/usertenant"
+	"github.com/redis/go-redis/v9"
 )
 
 // HealthChecks holds optional probe functions for /health/ready.
@@ -34,6 +36,7 @@ type Config struct {
 func NewRouter(
 	cfg Config,
 	pool *pgxpool.Pool,
+	rdb *redis.Client,
 	usersRepo *users.Repo,
 	userChannels *userchannels.Repo,
 	tenantMappings *usertenant.Repo,
@@ -79,7 +82,6 @@ func NewRouter(
 				return ""
 			}))
 		}
-		// Event ingestion
 		ing := &ingestHandler{pool: pool, fan: fan, deduper: deduper, reg: reg}
 		r.Post("/events", ing.ServeHTTP)
 		r.Get("/events/{event_id}/deliveries", (&deliveriesHandler{pool: pool}).listByEvent)
@@ -109,6 +111,13 @@ func NewRouter(
 		r.Put("/tenants/{tenant_id}/subscriptions/{event_type}/{channel_type}", me.subscribe)
 		r.Delete("/tenants/{tenant_id}/subscriptions/{event_type}/{channel_type}", me.unsubscribe)
 	})
+
+	// Let each adapter mount its own routes (connect flows, inbound webhooks, etc.)
+	for _, ct := range adapter.ChannelTypes() {
+		if rp, ok := adapter.Registry[ct].(adapter.RouteProvider); ok {
+			rp.MountRoutes(r, userMW, rdb, userChannels)
+		}
+	}
 
 	return r
 }

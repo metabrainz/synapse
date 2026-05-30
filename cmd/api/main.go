@@ -72,6 +72,17 @@ func main() {
 		rdb,
 	)
 
+	if err := adapter.Build(ctx, adapter.Options{
+		Telegram: adapter.TelegramOptions{
+			BotToken:      cfg.Telegram.BotToken,
+			WebhookURL:    cfg.Telegram.WebhookURL,
+			WebhookSecret: cfg.Telegram.WebhookSecret,
+		},
+	}); err != nil {
+		slog.Error("adapter: startup failed", "err", err)
+		os.Exit(1)
+	}
+
 	// Inject API keys from config into the static registry before building it.
 	tenants := schema.KnownTenants
 	for i := range tenants {
@@ -104,6 +115,7 @@ func main() {
 			Limiter: limiter,
 		},
 		pool,
+		rdb,
 		usersRepo,
 		userChannels,
 		tenantMappings,

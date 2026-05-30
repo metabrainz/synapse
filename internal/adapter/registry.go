@@ -1,8 +1,11 @@
 package adapter
 
 import (
+	"context"
+	"fmt"
 	"slices"
 
+	"github.com/metabrainz/synapse/internal/adapter/telegram"
 	"github.com/metabrainz/synapse/internal/adapter/webhook"
 )
 
@@ -10,14 +13,38 @@ import (
 type ChannelType string
 
 const (
-	Webhook ChannelType = "webhook"
+	Webhook  ChannelType = "webhook"
+	Telegram ChannelType = "telegram"
 )
 
 // Registry maps channel type names to their adapter implementations.
-// To add a new channel type: implement Adapter in a new sub-package and
-// add one line here. No other files need to change.
-var Registry = map[ChannelType]Adapter{
-	Webhook: webhook.New(),
+// Populated by Build at startup — callers must call Build before using Registry.
+var Registry map[ChannelType]Adapter
+
+// Build initializes the adapter registry and calls Start on every adapter that
+// implements Starter. Returns the first startup error encountered.
+// Must be called once at program startup before any other adapter functions.
+func Build(ctx context.Context, opts Options) error {
+	Registry = map[ChannelType]Adapter{
+		Webhook: webhook.New(),
+	}
+
+	if opts.Telegram.BotToken != "" {
+		Registry[Telegram] = telegram.New(
+			opts.Telegram.BotToken,
+			opts.Telegram.WebhookURL,
+			opts.Telegram.WebhookSecret,
+		)
+	}
+
+	for channelType, adp := range Registry {
+		if starter, ok := adp.(Starter); ok {
+			if err := starter.Start(ctx); err != nil {
+				return fmt.Errorf("adapter %s: start: %w", channelType, err)
+			}
+		}
+	}
+	return nil
 }
 
 // ChannelTypes returns the registered channel types in sorted order.
@@ -28,7 +55,6 @@ func ChannelTypes() []ChannelType {
 	for k := range Registry {
 		types = append(types, k)
 	}
-
 	slices.Sort(types)
 	return types
 }

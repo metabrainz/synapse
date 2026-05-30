@@ -5,7 +5,7 @@ var KnownTenants = []Tenant{
 	{
 		ID: "listenbrainz",
 		EventTypes: []EventType{
-			{Name: "listen", AllowedChannels: []string{"webhook"}},
+			{Name: "listen", AllowedChannels: []string{"webhook", "telegram"}},
 		},
 	},
 }

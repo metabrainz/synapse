@@ -55,7 +55,7 @@ CREATE TABLE deliveries (
     id           BIGSERIAL   PRIMARY KEY,
     event_id     BIGINT      NOT NULL REFERENCES events(id),
     channel_id   BIGINT      NOT NULL,
-    channel_type TEXT        NOT NULL CHECK (channel_type IN ('webhook', 'email')),
+    channel_type TEXT        NOT NULL,
     status       TEXT        NOT NULL DEFAULT 'PENDING'
                              CHECK (status IN ('PENDING', 'RETRYING', 'DELIVERED', 'DEAD')),
     attempt      INT         NOT NULL DEFAULT 0,

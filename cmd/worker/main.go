@@ -45,6 +45,15 @@ func main() {
 	}
 	defer rdb.Close()
 
+	if err := adapter.Build(ctx, adapter.Options{
+		Telegram: adapter.TelegramOptions{
+			BotToken: cfg.Telegram.BotToken,
+		},
+	}); err != nil {
+		slog.Error("adapter: startup failed", "err", err)
+		os.Exit(1)
+	}
+
 	if err := rabbitmq.Setup(cfg.RabbitMQ.URL, adapter.ChannelTypes()); err != nil {
 		slog.Error("rabbitmq topology", "err", err)
 		os.Exit(1)

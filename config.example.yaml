@@ -32,12 +32,20 @@ ingest:
   batch_size: 50
   drain_ms: 10
 
+telegram:
+  bot_token: ""
+  webhook_url: ""      # e.g. https://your-domain.com/internal/telegram/webhook
+  webhook_secret: ""   # random string; sent as X-Telegram-Bot-Api-Secret-Token
+
 worker:
   db_pool: 15
   channels:
     webhook:
       concurrency: 10
       prefetch: 10
+    telegram:
+      concurrency: 5
+      prefetch: 5
 
 rate_limit:
   burst: 100
