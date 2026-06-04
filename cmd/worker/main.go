@@ -14,6 +14,7 @@ import (
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
 	"github.com/metabrainz/synapse/internal/config"
 	"github.com/metabrainz/synapse/internal/dedup"
+	"github.com/metabrainz/synapse/internal/observability"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/worker"
 )
@@ -30,6 +31,13 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	flushSentry, err := observability.InitSentry(cfg.Observability.SentryDSN, cfg.Observability.Environment, cfg.Observability.Release)
+	if err != nil {
+		slog.Error("sentry init", "err", err)
+		os.Exit(1)
+	}
+	defer flushSentry()
 
 	pool, err := store.NewPool(ctx, cfg.Postgres, int32(cfg.Worker.DBPool))
 	if err != nil {
@@ -49,6 +57,7 @@ func main() {
 		Telegram: adapter.TelegramOptions{
 			BotToken: cfg.Telegram.BotToken,
 		},
+		Redis: rdb,
 	}); err != nil {
 		slog.Error("adapter: startup failed", "err", err)
 		os.Exit(1)

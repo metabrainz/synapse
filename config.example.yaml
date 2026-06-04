@@ -51,6 +51,11 @@ rate_limit:
   burst: 100
   rate_per_sec: 50
 
+observability:
+  sentry_dsn: ""           # Sentry project DSN; leave empty to disable
+  environment: "development"
+  release: ""              # e.g. git SHA injected at build time
+
 tenants:
   listenbrainz:
     api_key: ""

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -46,6 +47,7 @@ func NewRouter(
 	reg *schema.Registry,
 ) http.Handler {
 	r := chi.NewRouter()
+	r.Use(sentryhttp.New(sentryhttp.Options{Repanic: true}).Handle)
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.RealIP)
 
@@ -88,7 +90,17 @@ func NewRouter(
 	})
 
 	// User OAuth routes (Surface B — MetaBrainz OAuth token).
-	userMW := middleware.NewUserAuth(cfg.Introspector, usersRepo)
+	// When OAuth is not configured, userMW returns 503 for all /v1/me requests.
+	var userMW func(http.Handler) http.Handler
+	if cfg.Introspector != nil {
+		userMW = middleware.NewUserAuth(cfg.Introspector, usersRepo)
+	} else {
+		userMW = func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				writeError(w, http.StatusServiceUnavailable, "oauth not configured")
+			})
+		}
+	}
 	me := &meHandler{
 		channels:       userChannels,
 		tenantMappings: tenantMappings,

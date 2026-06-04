@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/metabrainz/synapse/internal/adapter"
@@ -45,6 +46,24 @@ func Handler(
 			return fmt.Errorf("unmarshal worker message: %w", err)
 		}
 
+		// Rate limit check comes BEFORE dedup. If we checked dedup first, the dedup
+		// key for (deliveryID, attempt) would be set, and when the re-queued message
+		// comes back with the same attempt counter it would be silently dropped.
+		if rl, ok := ad.(adapter.RateLimiter); ok {
+			if allowed, retryAfter := rl.RateLimit(ctx, msg); !allowed {
+				ttl := int64(retryAfter.Milliseconds())
+				if ttl <= 0 {
+					ttl = 1000
+				}
+				if pubErr := consumer.PublishRetry(ctx, channelType, body, ttl); pubErr != nil {
+					slog.Error("worker: rate-limit retry publish failed", "delivery_id", msg.DeliveryID, "err", pubErr)
+					return pubErr
+				}
+				slog.Info("worker: rate limited, re-queued", "delivery_id", msg.DeliveryID, "type", channelType, "ttl_ms", ttl)
+				return nil
+			}
+		}
+
 		// Guard against at-least-once redelivery producing duplicate calls.
 		seen, _ := deduper.Seen(ctx, msg.DeliveryID, msg.Attempt)
 		if seen {
@@ -68,6 +87,14 @@ func Handler(
 		slog.Warn("worker: delivery failed", "delivery_id", msg.DeliveryID, "attempt", msg.Attempt, "err", err)
 
 		if nextAttempt >= msg.MaxAttempts {
+			sentry.WithScope(func(scope *sentry.Scope) {
+				scope.SetTag("channel_type", channelType)
+				scope.SetContext("delivery", sentry.Context{
+					"delivery_id": msg.DeliveryID,
+					"attempts":    nextAttempt,
+				})
+				sentry.CaptureException(err)
+			})
 			if dbErr := deliveries.UpdateStatus(ctx, pool, msg.DeliveryID, deliveries.StatusDead, nextAttempt, &errStr); dbErr != nil {
 				slog.Error("worker: mark dead", "delivery_id", msg.DeliveryID, "err", dbErr)
 			}
@@ -85,6 +112,13 @@ func Handler(
 			return err
 		}
 		ttl := backoffMs(nextAttempt)
+		// If the downstream API told us exactly how long to wait (e.g. Telegram's
+		// retry_after on 429), respect that but never go below our own backoff.
+		if d, ok := adapter.RetryAfter(err); ok {
+			if ms := d.Milliseconds(); ms > ttl {
+				ttl = ms
+			}
+		}
 
 		if pubErr := consumer.PublishRetry(ctx, channelType, retryBody, ttl); pubErr != nil {
 			// If we can't schedule the retry, Nack so the DLQ catches it.

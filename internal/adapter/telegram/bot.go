@@ -1,3 +1,4 @@
+// Package telegram implements the Telegram Bot API delivery adapter.
 package telegram
 
 import (
@@ -10,6 +11,23 @@ import (
 	"sync"
 	"time"
 )
+
+// TelegramError represents a non-OK response from the Telegram Bot API.
+// It satisfies the RetryAfter() interface consumed by adapter.RetryAfter so
+// the worker can use the server-supplied delay instead of its default backoff.
+type TelegramError struct {
+	Code        int
+	Description string
+	retryAfter  time.Duration // zero if the response carried no retry_after
+}
+
+func (e *TelegramError) Error() string {
+	return fmt.Sprintf("telegram: API error %d: %s", e.Code, e.Description)
+}
+
+// RetryAfter returns the delay Telegram requests before the next attempt.
+// Zero means Telegram did not specify a delay (use the worker's default backoff).
+func (e *TelegramError) RetryAfter() time.Duration { return e.retryAfter }
 
 // Bot is a thin Telegram Bot API client. It is safe for concurrent use.
 type Bot struct {
@@ -102,13 +120,24 @@ func (b *Bot) call(ctx context.Context, method string, body any) (json.RawMessag
 	var result struct {
 		OK          bool            `json:"ok"`
 		Result      json.RawMessage `json:"result"`
+		ErrorCode   int             `json:"error_code"`
 		Description string          `json:"description"`
+		Parameters  struct {
+			RetryAfter int `json:"retry_after"` // seconds; non-zero on 429
+		} `json:"parameters"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, fmt.Errorf("telegram: %s: unexpected response (HTTP %d)", method, resp.StatusCode)
 	}
 	if !result.OK {
-		return nil, fmt.Errorf("telegram: %s: %s", method, result.Description)
+		apiErr := &TelegramError{
+			Code:        result.ErrorCode,
+			Description: result.Description,
+		}
+		if result.Parameters.RetryAfter > 0 {
+			apiErr.retryAfter = time.Duration(result.Parameters.RetryAfter) * time.Second
+		}
+		return nil, apiErr
 	}
 	return result.Result, nil
 }

@@ -6,17 +6,25 @@ package config
 import "fmt"
 
 type Config struct {
-	Postgres  PostgresConfig          `yaml:"postgres"`
-	Redis     RedisConfig             `yaml:"redis"`
-	RabbitMQ  RabbitMQConfig          `yaml:"rabbitmq"`
-	HTTP      HTTPConfig              `yaml:"http"`
-	Worker    WorkerConfig            `yaml:"worker"`
-	Relay     RelayConfig             `yaml:"relay"`
-	Ingest    IngestConfig            `yaml:"ingest"`
-	RateLimit RateLimitConfig         `yaml:"rate_limit"`
-	OAuth     OAuthConfig             `yaml:"oauth"`
-	Telegram  TelegramConfig          `yaml:"telegram"`
-	Tenants   map[string]TenantConfig `yaml:"tenants"`
+	Postgres      PostgresConfig          `yaml:"postgres"`
+	Redis         RedisConfig             `yaml:"redis"`
+	RabbitMQ      RabbitMQConfig          `yaml:"rabbitmq"`
+	HTTP          HTTPConfig              `yaml:"http"`
+	Worker        WorkerConfig            `yaml:"worker"`
+	Relay         RelayConfig             `yaml:"relay"`
+	Ingest        IngestConfig            `yaml:"ingest"`
+	RateLimit     RateLimitConfig         `yaml:"rate_limit"`
+	OAuth         OAuthConfig             `yaml:"oauth"`
+	Telegram      TelegramConfig          `yaml:"telegram"`
+	Observability ObservabilityConfig     `yaml:"observability"`
+	Tenants       map[string]TenantConfig `yaml:"tenants"`
+}
+
+type ObservabilityConfig struct {
+	// SentryDSN is the Sentry project DSN. Disabled when empty.
+	SentryDSN   string `yaml:"sentry_dsn"`
+	Environment string `yaml:"environment"`
+	Release     string `yaml:"release"`
 }
 
 // TenantConfig holds per-tenant secrets loaded from the environment or config file.

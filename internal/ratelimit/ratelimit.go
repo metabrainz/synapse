@@ -62,8 +62,9 @@ func New(rdb *redis.Client, burst, ratePerSec int) *Limiter {
 	return &Limiter{rdb: rdb, burst: burst, rate: ratePerSec}
 }
 
-func (l *Limiter) Allow(ctx context.Context, tenantID string) (bool, error) {
-	key := fmt.Sprintf("synapse:rl:%s", tenantID)
+// AllowKey runs the token bucket against an arbitrary Redis key.
+// Use this when the caller manages its own key namespace (e.g. adapter-level limiters).
+func (l *Limiter) AllowKey(ctx context.Context, key string) (bool, error) {
 	nowNs := time.Now().UnixNano()
 	result, err := tokenBucketScript.Run(ctx, l.rdb, []string{key},
 		l.burst, l.rate, nowNs,
@@ -72,6 +73,10 @@ func (l *Limiter) Allow(ctx context.Context, tenantID string) (bool, error) {
 		return false, err
 	}
 	return result == 1, nil
+}
+
+func (l *Limiter) Allow(ctx context.Context, tenantID string) (bool, error) {
+	return l.AllowKey(ctx, fmt.Sprintf("synapse:rl:%s", tenantID))
 }
 
 // Middleware extracts the tenant ID from the request context (set by auth middleware)

@@ -18,6 +18,7 @@ import (
 	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/oauth"
+	"github.com/metabrainz/synapse/internal/observability"
 	"github.com/metabrainz/synapse/internal/ratelimit"
 	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store"
@@ -41,6 +42,13 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	flushSentry, err := observability.InitSentry(cfg.Observability.SentryDSN, cfg.Observability.Environment, cfg.Observability.Release)
+	if err != nil {
+		slog.Error("sentry init", "err", err)
+		os.Exit(1)
+	}
+	defer flushSentry()
+
 	pool, err := store.NewPool(ctx, cfg.Postgres, cfg.HTTP.DBConns)
 	if err != nil {
 		slog.Error("postgres", "err", err)
@@ -61,16 +69,17 @@ func main() {
 	tenantMappings := usertenant.New(pool)
 	eventSubs := usereventsubs.New(pool)
 
-	if cfg.OAuth.IntrospectionURL == "" || cfg.OAuth.ClientID == "" {
-		slog.Error("oauth: introspection_url and client_id are required")
-		os.Exit(1)
+	var introspector oauth.Introspector
+	if cfg.OAuth.IntrospectionURL != "" && cfg.OAuth.ClientID != "" {
+		introspector = oauth.NewMBIntrospector(
+			cfg.OAuth.ClientID,
+			cfg.OAuth.ClientSecret,
+			cfg.OAuth.IntrospectionURL,
+			rdb,
+		)
+	} else {
+		slog.Warn("oauth: not configured — /v1/me routes will return 503")
 	}
-	introspector := oauth.NewMBIntrospector(
-		cfg.OAuth.ClientID,
-		cfg.OAuth.ClientSecret,
-		cfg.OAuth.IntrospectionURL,
-		rdb,
-	)
 
 	if err := adapter.Build(ctx, adapter.Options{
 		Telegram: adapter.TelegramOptions{
@@ -78,6 +87,7 @@ func main() {
 			WebhookURL:    cfg.Telegram.WebhookURL,
 			WebhookSecret: cfg.Telegram.WebhookSecret,
 		},
+		Redis: rdb,
 	}); err != nil {
 		slog.Error("adapter: startup failed", "err", err)
 		os.Exit(1)

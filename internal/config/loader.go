@@ -110,6 +110,8 @@ func applyEnv(cfg *Config) error {
 	str(&cfg.Postgres.DirectDSN, "SYNAPSE_PG_DIRECT_DSN")
 	str(&cfg.Redis.Addr, "SYNAPSE_REDIS_ADDR")
 	str(&cfg.RabbitMQ.URL, "SYNAPSE_RABBITMQ_URL")
+	str(&cfg.Observability.SentryDSN, "SYNAPSE_OBSERVABILITY_SENTRY_DSN")
+	str(&cfg.Observability.Environment, "SYNAPSE_OBSERVABILITY_ENVIRONMENT")
 
 	if v := os.Getenv("SYNAPSE_PG_PGBOUNCER"); v == "true" || v == "1" {
 		cfg.Postgres.PgBouncer = true

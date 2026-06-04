@@ -12,6 +12,7 @@ import (
 	"github.com/metabrainz/synapse/internal/broker"
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
 	"github.com/metabrainz/synapse/internal/config"
+	"github.com/metabrainz/synapse/internal/observability"
 	"github.com/metabrainz/synapse/internal/relay"
 	"github.com/metabrainz/synapse/internal/store"
 )
@@ -28,6 +29,13 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	flushSentry, err := observability.InitSentry(cfg.Observability.SentryDSN, cfg.Observability.Environment, cfg.Observability.Release)
+	if err != nil {
+		slog.Error("sentry init", "err", err)
+		os.Exit(1)
+	}
+	defer flushSentry()
 
 	pool, err := store.NewPool(ctx, cfg.Postgres, int32(cfg.Relay.Workers))
 	if err != nil {

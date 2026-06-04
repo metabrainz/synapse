@@ -34,6 +34,7 @@ func Build(ctx context.Context, opts Options) error {
 			opts.Telegram.BotToken,
 			opts.Telegram.WebhookURL,
 			opts.Telegram.WebhookSecret,
+			opts.Redis,
 		)
 	}
 
