@@ -1,12 +1,12 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "ListenEvent",
+  "title": "ThanksEvent",
   "type": "object",
-  "required": ["actor", "listen", "recording", "summary"],
+  "required": ["actor", "recording", "summary"],
   "properties": {
     "actor":     { "$ref": "#/$defs/actor" },
-    "listen":    { "$ref": "#/$defs/listen_meta" },
     "recording": { "$ref": "#/$defs/recording" },
+    "message":   { "type": "string" },
     "summary":   { "type": "string", "minLength": 1 }
   },
   "additionalProperties": false,
@@ -18,19 +18,6 @@
       "properties": {
         "username": { "type": "string", "minLength": 1 },
         "url":      { "type": "string" }
-      },
-      "additionalProperties": false
-    },
-    "listen_meta": {
-      "title": "ListenMeta",
-      "type": "object",
-      "required": ["listened_at"],
-      "properties": {
-        "listened_at":       { "type": "integer" },
-        "recording_msid":    { "type": "string" },
-        "music_service":     { "type": "string" },
-        "submission_client": { "type": "string" },
-        "duration_ms":       { "type": "integer", "minimum": 0 }
       },
       "additionalProperties": false
     },

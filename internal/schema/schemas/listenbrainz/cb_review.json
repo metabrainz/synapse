@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CritiqueBrainzReviewEvent",
+  "type": "object",
+  "required": ["actor", "entity", "summary"],
+  "properties": {
+    "actor":   { "$ref": "#/$defs/actor" },
+    "entity":  { "$ref": "#/$defs/entity" },
+    "summary": { "type": "string", "minLength": 1 }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "actor": {
+      "title": "Actor",
+      "type": "object",
+      "required": ["username", "url"],
+      "properties": {
+        "username": { "type": "string", "minLength": 1 },
+        "url":      { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "entity": {
+      "title": "Entity",
+      "type": "object",
+      "required": ["id", "name", "type", "url"],
+      "properties": {
+        "id":   { "type": "string" },
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "enum": ["review"] },
+        "url":  { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

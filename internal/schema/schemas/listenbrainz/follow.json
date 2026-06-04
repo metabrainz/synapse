@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FollowEvent",
+  "type": "object",
+  "required": ["actor", "summary"],
+  "properties": {
+    "actor":   { "$ref": "#/$defs/actor" },
+    "summary": { "type": "string", "minLength": 1 }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "actor": {
+      "title": "Actor",
+      "type": "object",
+      "required": ["username", "url"],
+      "properties": {
+        "username": { "type": "string", "minLength": 1 },
+        "url":      { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

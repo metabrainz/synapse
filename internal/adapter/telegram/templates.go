@@ -11,19 +11,38 @@ import (
 // eventTemplates maps event_type to a Telegram message template string.
 // Templates have access to: .TenantID, .UserID, .EventType, .Payload (map[string]any),
 // .RawPayload (pretty-printed JSON fallback).
-// Use {{get .Payload "key"}} or {{get .Payload "nested" "key"}} for deep map access.
+// Use {{get .Payload "key"}} or {{get .Payload "key1" "key2"}} for nested access.
+// Use {{str .Payload "key"}} for safe string access (returns "" if missing or not a string).
 //
 // To add a new event type: add one entry here. No other changes needed.
 var eventTemplates = map[string]string{
-	"listen": "🎵 New listen: {{get .Payload \"track_metadata\" \"track_name\"}} by {{get .Payload \"track_metadata\" \"artist_name\"}}",
+	"listen": `🎵 {{str .Payload "actor" "username"}} listened to {{str .Payload "recording" "track_name"}} by {{str .Payload "recording" "artist_name"}}`,
+
+	"recording_recommendation": `🎵 {{str .Payload "actor" "username"}} recommended {{str .Payload "recording" "track_name"}} by {{str .Payload "recording" "artist_name"}}`,
+
+	"personal_recording_recommendation": `💌 {{str .Payload "actor" "username"}} recommended {{str .Payload "recording" "track_name"}} by {{str .Payload "recording" "artist_name"}} to you{{with str .Payload "message"}}
+
+"{{.}}"{{end}}`,
+
+	"recording_pin": `📌 {{str .Payload "actor" "username"}} pinned {{str .Payload "recording" "track_name"}} by {{str .Payload "recording" "artist_name"}}{{with str .Payload "message"}}
+
+"{{.}}"{{end}}`,
+
+	"thanks": `🙏 {{str .Payload "actor" "username"}} thanked you for recommending {{str .Payload "recording" "track_name"}} by {{str .Payload "recording" "artist_name"}}{{with str .Payload "message"}}
+
+"{{.}}"{{end}}`,
+
+	"follow": `👤 {{str .Payload "actor" "username"}} started following you`,
+
+	"notification": `🔔 {{str .Payload "message"}}`,
+
+	"cb_review": `📝 {{str .Payload "actor" "username"}} reviewed {{str .Payload "entity" "name"}}`,
 }
 
 const defaultTemplate = "[{{.TenantID}}] {{.EventType}}\n\n{{.RawPayload}}"
 
-// templateFuncs are available in all event templates.
 var templateFuncs = template.FuncMap{
-	// get traverses nested map[string]any by successive keys.
-	// Returns nil if any key is missing or the value is not a map.
+	// get traverses nested map[string]any by successive keys, returning nil if any step is missing.
 	"get": func(m map[string]any, keys ...string) any {
 		var cur any = m
 		for _, k := range keys {
@@ -35,10 +54,21 @@ var templateFuncs = template.FuncMap{
 		}
 		return cur
 	},
+	// str is like get but returns a string (empty string if missing or not a string).
+	"str": func(m map[string]any, keys ...string) string {
+		var cur any = m
+		for _, k := range keys {
+			mm, ok := cur.(map[string]any)
+			if !ok {
+				return ""
+			}
+			cur = mm[k]
+		}
+		s, _ := cur.(string)
+		return s
+	},
 }
 
-// compiled holds pre-parsed templates, keyed by event type.
-// Compiled once at init — a bad template panics at startup, not at delivery time.
 var compiled map[string]*template.Template
 var compiledDefault *template.Template
 
@@ -80,7 +110,6 @@ func renderMessage(msg fanout.WorkerMessage) string {
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
-		// Execution failure (e.g. nil value in template): fall back to raw payload
 		return data.RawPayload
 	}
 	return buf.String()
