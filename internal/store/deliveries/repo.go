@@ -22,6 +22,7 @@ const (
 type Delivery struct {
 	ID          int64      `json:"id"`
 	EventID     int64      `json:"event_id"`
+	UserID      string     `json:"user_id"`
 	ChannelID   int64      `json:"channel_id"`
 	ChannelType string     `json:"channel_type"`
 	Status      string     `json:"status"`
@@ -40,22 +41,24 @@ type Delivery struct {
 func InsertBatch(ctx context.Context, q store.Querier, batch []Delivery) ([]int64, error) {
 	n := len(batch)
 	eventIDs := make([]int64, n)
+	userIDs := make([]string, n)
 	channelIDs := make([]int64, n)
 	channelTypes := make([]string, n)
 	maxAttempts := make([]int32, n)
 
 	for i, delivery := range batch {
 		eventIDs[i] = delivery.EventID
+		userIDs[i] = delivery.UserID
 		channelIDs[i] = delivery.ChannelID
 		channelTypes[i] = delivery.ChannelType
 		maxAttempts[i] = int32(delivery.MaxAttempts)
 	}
 
 	rows, err := q.Query(ctx,
-		`INSERT INTO deliveries (event_id, channel_id, channel_type, max_attempts)
-		 SELECT unnest($1::bigint[]), unnest($2::bigint[]), unnest($3::text[]), unnest($4::int[])
+		`INSERT INTO deliveries (event_id, user_id, channel_id, channel_type, max_attempts)
+		 SELECT unnest($1::bigint[]), unnest($2::text[]), unnest($3::bigint[]), unnest($4::text[]), unnest($5::int[])
 		 RETURNING id`,
-		eventIDs, channelIDs, channelTypes, maxAttempts,
+		eventIDs, userIDs, channelIDs, channelTypes, maxAttempts,
 	)
 	if err != nil {
 		return nil, err
@@ -89,7 +92,7 @@ func UpdateStatus(ctx context.Context, q store.Querier, id int64, status string,
 
 func ListByEvent(ctx context.Context, q store.Querier, eventID int64) ([]Delivery, error) {
 	rows, err := q.Query(ctx,
-		`SELECT id, event_id, channel_id, channel_type, status, attempt,
+		`SELECT id, event_id, user_id, channel_id, channel_type, status, attempt,
 		        max_attempts, last_error, delivered_at, created_at, updated_at
 		 FROM deliveries WHERE event_id = $1 ORDER BY id`,
 		eventID,
@@ -103,7 +106,7 @@ func ListByEvent(ctx context.Context, q store.Querier, eventID int64) ([]Deliver
 	for rows.Next() {
 		var delivery Delivery
 		if err := rows.Scan(
-			&delivery.ID, &delivery.EventID, &delivery.ChannelID, &delivery.ChannelType, &delivery.Status,
+			&delivery.ID, &delivery.EventID, &delivery.UserID, &delivery.ChannelID, &delivery.ChannelType, &delivery.Status,
 			&delivery.Attempt, &delivery.MaxAttempts, &delivery.LastError, &delivery.DeliveredAt,
 			&delivery.CreatedAt, &delivery.UpdatedAt,
 		); err != nil {
@@ -117,11 +120,11 @@ func ListByEvent(ctx context.Context, q store.Querier, eventID int64) ([]Deliver
 func GetByID(ctx context.Context, q store.Querier, id int64) (*Delivery, error) {
 	var delivery Delivery
 	err := q.QueryRow(ctx,
-		`SELECT id, event_id, channel_id, channel_type, status, attempt,
+		`SELECT id, event_id, user_id, channel_id, channel_type, status, attempt,
 		        max_attempts, last_error, delivered_at, created_at, updated_at
 		 FROM deliveries WHERE id = $1`, id,
 	).Scan(
-		&delivery.ID, &delivery.EventID, &delivery.ChannelID, &delivery.ChannelType, &delivery.Status,
+		&delivery.ID, &delivery.EventID, &delivery.UserID, &delivery.ChannelID, &delivery.ChannelType, &delivery.Status,
 		&delivery.Attempt, &delivery.MaxAttempts, &delivery.LastError, &delivery.DeliveredAt,
 		&delivery.CreatedAt, &delivery.UpdatedAt,
 	)

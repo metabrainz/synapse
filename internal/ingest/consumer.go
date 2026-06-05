@@ -21,11 +21,18 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// MaxRecipientsPerEvent caps the candidate recipient set per logical event.
+// Publishers with a larger audience must chunk into multiple events.
+const MaxRecipientsPerEvent = 5000
+
 // Message is the payload producers publish to the events.ingest exchange.
+// Recipients is the candidate recipient set; the tenant resolves it from its own
+// graph (followers, watchers, or a single direct target). Synapse filters it
+// against subscriptions — it never learns why these users are recipients.
 type Message struct {
 	TenantID       string          `json:"tenant_id"`
-	UserID         string          `json:"user_id"`
 	EventType      string          `json:"event_type"`
+	Recipients     []string        `json:"recipients"`
 	Payload        json.RawMessage `json:"payload"`
 	IdempotencyKey *string         `json:"idempotency_key"`
 }
@@ -71,8 +78,14 @@ func parseMessages(bodies [][]byte, now time.Time, reg *schema.Registry) []event
 			slog.Error("ingest: malformed message, dropping", "err", err)
 			continue
 		}
-		if msg.TenantID == "" || msg.UserID == "" || msg.EventType == "" {
+		if msg.TenantID == "" || msg.EventType == "" {
 			slog.Error("ingest: missing required fields, dropping")
+			continue
+		}
+		recipients := DedupeRecipients(msg.Recipients)
+		if len(recipients) == 0 || len(recipients) > MaxRecipientsPerEvent {
+			slog.Error("ingest: invalid recipient count, dropping",
+				"tenant", msg.TenantID, "event_type", msg.EventType, "count", len(recipients))
 			continue
 		}
 		if msg.Payload == nil {
@@ -85,14 +98,35 @@ func parseMessages(bodies [][]byte, now time.Time, reg *schema.Registry) []event
 		}
 		evs = append(evs, events.Event{
 			TenantID:       msg.TenantID,
-			UserID:         msg.UserID,
 			EventType:      msg.EventType,
+			Recipients:     recipients,
 			Payload:        msg.Payload,
 			IdempotencyKey: msg.IdempotencyKey,
 			CreatedAt:      now,
 		})
 	}
 	return evs
+}
+
+// DedupeRecipients removes empty and duplicate ids while preserving order, so a
+// recipient appearing twice in the candidate set produces exactly one delivery.
+func DedupeRecipients(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, id := range in {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 // handleBatch processes one drained batch end-to-end inside a single transaction:

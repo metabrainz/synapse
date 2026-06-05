@@ -38,10 +38,12 @@ CREATE TABLE user_event_subscriptions (
     PRIMARY KEY (user_id, tenant_id, event_type, channel_type)
 );
 
+-- events is the logical event: what happened, not who receives it. A single
+-- event fans out to many recipients, so there is no per-recipient column here —
+-- the recipient lives on each delivery row.
 CREATE TABLE events (
     id              BIGSERIAL   PRIMARY KEY,
     tenant_id       TEXT        NOT NULL,
-    user_id         TEXT        NOT NULL,
     event_type      TEXT        NOT NULL,
     payload         JSONB       NOT NULL DEFAULT '{}',
     idempotency_key TEXT,
@@ -49,12 +51,15 @@ CREATE TABLE events (
     CONSTRAINT uq_event_idempotency UNIQUE (tenant_id, idempotency_key)
 );
 
-CREATE INDEX idx_events_tenant_user ON events (tenant_id, user_id, created_at DESC);
+CREATE INDEX idx_events_tenant_type ON events (tenant_id, event_type, created_at DESC);
 
 CREATE TABLE deliveries (
     id           BIGSERIAL   PRIMARY KEY,
     event_id     BIGINT      NOT NULL REFERENCES events(id),
-    channel_id   BIGINT      NOT NULL,
+    user_id      TEXT        NOT NULL,  -- the recipient; stored explicitly so it
+                                        -- survives channel deletion and powers
+                                        -- per-user queries (e.g. in-app inbox).
+    channel_id   BIGINT      NOT NULL,  -- snapshot of user_channels.id, no FK
     channel_type TEXT        NOT NULL,
     status       TEXT        NOT NULL DEFAULT 'PENDING'
                              CHECK (status IN ('PENDING', 'RETRYING', 'DELIVERED', 'DEAD')),
@@ -68,6 +73,7 @@ CREATE TABLE deliveries (
 
 CREATE INDEX idx_deliveries_status ON deliveries (status, created_at) WHERE status IN ('PENDING', 'RETRYING');
 CREATE INDEX idx_deliveries_event  ON deliveries (event_id);
+CREATE INDEX idx_deliveries_user   ON deliveries (user_id, created_at DESC);
 
 CREATE TABLE outbox (
     id          BIGSERIAL   PRIMARY KEY,

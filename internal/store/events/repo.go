@@ -17,20 +17,23 @@ import (
 type Event struct {
 	ID             int64
 	TenantID       string
-	UserID         string
 	EventType      string
 	Payload        json.RawMessage
 	IdempotencyKey *string
 	CreatedAt      time.Time
+
+	// Recipients is the candidate recipient set for fan-out. It is transient
+	// (not a column) — set at ingest, consumed by the fanout step, never stored.
+	Recipients []string
 }
 
 // Insert writes an event inside a transaction. Always called via store.WithTx.
 // Returns the event with ID and CreatedAt populated from the DB.
 func Insert(ctx context.Context, q store.Querier, event Event) (Event, error) {
 	err := q.QueryRow(ctx,
-		`INSERT INTO events (tenant_id, user_id, event_type, payload, idempotency_key)
-		 VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
-		event.TenantID, event.UserID, event.EventType, event.Payload, event.IdempotencyKey,
+		`INSERT INTO events (tenant_id, event_type, payload, idempotency_key)
+		 VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
+		event.TenantID, event.EventType, event.Payload, event.IdempotencyKey,
 	).Scan(&event.ID, &event.CreatedAt)
 	return event, err
 }
@@ -42,25 +45,23 @@ func Insert(ctx context.Context, q store.Querier, event Event) (Event, error) {
 func InsertBatch(ctx context.Context, q store.Querier, evs []Event) ([]int64, error) {
 	n := len(evs)
 	tenantIDs := make([]string, n)
-	userIDs := make([]string, n)
 	eventTypes := make([]string, n)
 	payloads := make([]string, n)
 	ikeys := make([]*string, n)
 
 	for i, event := range evs {
 		tenantIDs[i] = event.TenantID
-		userIDs[i] = event.UserID
 		eventTypes[i] = event.EventType
 		payloads[i] = string(event.Payload)
 		ikeys[i] = event.IdempotencyKey
 	}
 
 	rows, err := q.Query(ctx,
-		`INSERT INTO events (tenant_id, user_id, event_type, payload, idempotency_key)
-		 SELECT unnest($1::text[]), unnest($2::text[]), unnest($3::text[]),
-		        unnest($4::text[])::jsonb, unnest($5::text[])
+		`INSERT INTO events (tenant_id, event_type, payload, idempotency_key)
+		 SELECT unnest($1::text[]), unnest($2::text[]),
+		        unnest($3::text[])::jsonb, unnest($4::text[])
 		 RETURNING id`,
-		tenantIDs, userIDs, eventTypes, payloads, ikeys,
+		tenantIDs, eventTypes, payloads, ikeys,
 	)
 	if err != nil {
 		return nil, err
@@ -81,9 +82,9 @@ func InsertBatch(ctx context.Context, q store.Querier, evs []Event) ([]int64, er
 func GetByID(ctx context.Context, q store.Querier, id int64) (*Event, error) {
 	var event Event
 	err := q.QueryRow(ctx,
-		`SELECT id, tenant_id, user_id, event_type, payload, idempotency_key, created_at
+		`SELECT id, tenant_id, event_type, payload, idempotency_key, created_at
 		 FROM events WHERE id = $1`, id,
-	).Scan(&event.ID, &event.TenantID, &event.UserID, &event.EventType, &event.Payload, &event.IdempotencyKey, &event.CreatedAt)
+	).Scan(&event.ID, &event.TenantID, &event.EventType, &event.Payload, &event.IdempotencyKey, &event.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

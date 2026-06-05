@@ -10,6 +10,7 @@ import (
 	"github.com/metabrainz/synapse/internal/api/middleware"
 	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/ingest"
 	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/events"
@@ -23,7 +24,7 @@ type ingestHandler struct {
 }
 
 type ingestRequest struct {
-	UserID         string          `json:"user_id"`
+	Recipients     []string        `json:"recipients"`
 	EventType      string          `json:"event_type"`
 	Payload        json.RawMessage `json:"payload"`
 	IdempotencyKey *string         `json:"idempotency_key"`
@@ -42,8 +43,17 @@ func (h *ingestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.UserID == "" || req.EventType == "" {
-		writeError(w, http.StatusBadRequest, "user_id and event_type are required")
+	if req.EventType == "" {
+		writeError(w, http.StatusBadRequest, "event_type is required")
+		return
+	}
+	recipients := ingest.DedupeRecipients(req.Recipients)
+	if len(recipients) == 0 {
+		writeError(w, http.StatusBadRequest, "recipients must contain at least one user_id")
+		return
+	}
+	if len(recipients) > ingest.MaxRecipientsPerEvent {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("recipients exceeds max of %d", ingest.MaxRecipientsPerEvent))
 		return
 	}
 	if req.Payload == nil {
@@ -66,7 +76,7 @@ func (h *ingestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Dry-run: preview matching channels without writing anything.
 	if r.URL.Query().Get("dry_run") == "true" {
-		channels, err := h.fan.Preview(ctx, tenant.ID, req.UserID, req.EventType)
+		channels, err := h.fan.Preview(ctx, tenant.ID, req.EventType, recipients)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "fanout preview failed")
 			return
@@ -93,8 +103,8 @@ func (h *ingestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	err := store.WithTx(ctx, h.pool, func(q store.Querier) error {
 		ev := events.Event{
 			TenantID:       tenant.ID,
-			UserID:         req.UserID,
 			EventType:      req.EventType,
+			Recipients:     recipients,
 			Payload:        req.Payload,
 			IdempotencyKey: req.IdempotencyKey,
 		}

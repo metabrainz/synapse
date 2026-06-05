@@ -62,17 +62,18 @@ func (c *Cache) Start(ctx context.Context) error {
 	return nil
 }
 
-// ListActiveForEvent satisfies the fanout.Lookup interface.
-func (c *Cache) ListActiveForEvent(_ context.Context, tenantID, userID, eventType string) ([]subscriptions.ActiveChannel, error) {
+// ListActiveForRecipients satisfies the fanout.Lookup interface. It resolves the
+// active channels for a whole recipient set in one pass of in-memory map lookups —
+// no DB round-trip regardless of how many recipients (≤5000) are supplied.
+func (c *Cache) ListActiveForRecipients(_ context.Context, tenantID, eventType string, recipients []string) ([]subscriptions.ActiveChannel, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	exactKey := tenantID + ":" + userID + ":" + eventType
-	wildcardKey := tenantID + ":" + userID
-
 	var out []subscriptions.ActiveChannel
-	out = append(out, c.exact[exactKey]...)
-	out = append(out, c.wildcard[wildcardKey]...)
+	for _, userID := range recipients {
+		out = append(out, c.exact[tenantID+":"+userID+":"+eventType]...)
+		out = append(out, c.wildcard[tenantID+":"+userID]...)
+	}
 	return out, nil
 }
 

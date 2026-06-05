@@ -110,8 +110,15 @@ func applyEnv(cfg *Config) error {
 	str(&cfg.Postgres.DirectDSN, "SYNAPSE_PG_DIRECT_DSN")
 	str(&cfg.Redis.Addr, "SYNAPSE_REDIS_ADDR")
 	str(&cfg.RabbitMQ.URL, "SYNAPSE_RABBITMQ_URL")
+	str(&cfg.OAuth.ClientID, "SYNAPSE_OAUTH_CLIENT_ID")
+	str(&cfg.OAuth.ClientSecret, "SYNAPSE_OAUTH_CLIENT_SECRET")
+	str(&cfg.OAuth.IntrospectionURL, "SYNAPSE_OAUTH_INTROSPECTION_URL")
+	str(&cfg.Telegram.BotToken, "SYNAPSE_TELEGRAM_BOT_TOKEN")
+	str(&cfg.Telegram.WebhookURL, "SYNAPSE_TELEGRAM_WEBHOOK_URL")
+	str(&cfg.Telegram.WebhookSecret, "SYNAPSE_TELEGRAM_WEBHOOK_SECRET")
 	str(&cfg.Observability.SentryDSN, "SYNAPSE_OBSERVABILITY_SENTRY_DSN")
 	str(&cfg.Observability.Environment, "SYNAPSE_OBSERVABILITY_ENVIRONMENT")
+	str(&cfg.Observability.Release, "SYNAPSE_OBSERVABILITY_RELEASE")
 
 	if v := os.Getenv("SYNAPSE_PG_PGBOUNCER"); v == "true" || v == "1" {
 		cfg.Postgres.PgBouncer = true

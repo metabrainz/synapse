@@ -11,7 +11,9 @@ import (
 )
 
 // ActiveChannel is the minimal shape the fanout needs per matched subscription.
+// UserID is the recipient — recorded on each delivery so it survives channel deletion.
 type ActiveChannel struct {
+	UserID      string
 	ChannelID   int64
 	ChannelType string
 	Config      json.RawMessage
@@ -54,15 +56,54 @@ func (r *Repo) ListActiveForEvent(ctx context.Context, tenantID, userID, eventTy
 		if err := rows.Scan(&channel.ChannelID, &channel.ChannelType, &channel.Config); err != nil {
 			return nil, err
 		}
+		channel.UserID = userID // the WHERE clause pins user_id = $1
+		out = append(out, channel)
+	}
+	return out, rows.Err()
+}
+
+// ListActiveForRecipients resolves active channels for many recipients in one query.
+// It is the DB fallback for the fanout; production resolves from the in-memory Cache.
+// Like ListActiveForEvent, it matches exact event types only (wildcard '*' subscriptions
+// are expanded by the cache layer, not here).
+func (r *Repo) ListActiveForRecipients(ctx context.Context, tenantID, eventType string, recipients []string) ([]ActiveChannel, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT channel_mapping.user_id, channel.id, channel.channel_type, channel.config
+		 FROM user_tenant_channel_mapping channel_mapping
+		 JOIN user_channels channel
+		   ON channel.id        = channel_mapping.user_channel_id
+		  AND channel.is_active = TRUE
+		 JOIN user_event_subscriptions event_sub
+		   ON event_sub.user_id      = channel_mapping.user_id
+		  AND event_sub.tenant_id    = channel_mapping.tenant_id
+		  AND event_sub.event_type   = $2
+		  AND event_sub.channel_type = channel_mapping.channel_type
+		 WHERE channel_mapping.tenant_id  = $1
+		   AND channel_mapping.user_id    = ANY($3)
+		   AND channel_mapping.is_enabled = TRUE
+		   AND event_sub.is_enabled       = TRUE`,
+		tenantID, eventType, recipients,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []ActiveChannel
+	for rows.Next() {
+		var channel ActiveChannel
+		if err := rows.Scan(&channel.UserID, &channel.ChannelID, &channel.ChannelType, &channel.Config); err != nil {
+			return nil, err
+		}
 		out = append(out, channel)
 	}
 	return out, rows.Err()
 }
 
 // CacheEntry is a fully-qualified subscription row used to populate the fanout cache.
+// UserID comes from the embedded ActiveChannel.
 type CacheEntry struct {
 	TenantID  string
-	UserID    string
 	EventType string
 	ActiveChannel
 }

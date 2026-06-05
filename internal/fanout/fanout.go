@@ -18,10 +18,10 @@ import (
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 )
 
-// Lookup resolves active channels for a given event. Satisfied by both
+// Lookup resolves active channels for a set of recipients. Satisfied by both
 // *subscriptions.Repo (direct DB) and *Cache (in-memory, preferred in production).
 type Lookup interface {
-	ListActiveForEvent(ctx context.Context, tenantID, userID, eventType string) ([]subscriptions.ActiveChannel, error)
+	ListActiveForRecipients(ctx context.Context, tenantID, eventType string, recipients []string) ([]subscriptions.ActiveChannel, error)
 }
 
 // WorkerMessage is the payload written to the outbox and published to RabbitMQ.
@@ -52,7 +52,7 @@ func newWorkerMessage(deliveryID int64, ev events.Event, ch subscriptions.Active
 		EventID:       ev.ID,
 		EventType:     ev.EventType,
 		TenantID:      ev.TenantID,
-		UserID:        ev.UserID,
+		UserID:        ch.UserID,
 		Payload:       ev.Payload,
 		Attempt:       0,
 		MaxAttempts:   maxAttempts,
@@ -76,8 +76,8 @@ func New(subs Lookup, maxAttempts func(channelType string) int, reg *schema.Regi
 
 // Preview returns the number of channels that would receive this event
 // without writing anything — used by the dry_run ingest path.
-func (f *Fanout) Preview(ctx context.Context, tenantID, userID, eventType string) (int, error) {
-	channels, err := f.subs.ListActiveForEvent(ctx, tenantID, userID, eventType)
+func (f *Fanout) Preview(ctx context.Context, tenantID, eventType string, recipients []string) (int, error) {
+	channels, err := f.subs.ListActiveForRecipients(ctx, tenantID, eventType, recipients)
 	if err != nil {
 		return 0, fmt.Errorf("list subscriptions: %w", err)
 	}
@@ -108,7 +108,7 @@ func (f *Fanout) FanBatch(ctx context.Context, q store.Querier, evs []events.Eve
 	// Resolve all subscriptions in memory before touching the DB.
 	var targets []target
 	for _, ev := range evs {
-		subs, err := f.subs.ListActiveForEvent(ctx, ev.TenantID, ev.UserID, ev.EventType)
+		subs, err := f.subs.ListActiveForRecipients(ctx, ev.TenantID, ev.EventType, ev.Recipients)
 		if err != nil {
 			return 0, fmt.Errorf("list subscriptions: %w", err)
 		}
@@ -128,6 +128,7 @@ func (f *Fanout) FanBatch(ctx context.Context, q store.Querier, evs []events.Eve
 	for i, target := range targets {
 		ds[i] = deliveries.Delivery{
 			EventID:     target.ev.ID,
+			UserID:      target.sub.UserID,
 			ChannelID:   target.sub.ChannelID,
 			ChannelType: target.sub.ChannelType,
 			MaxAttempts: target.maxAttempts,
