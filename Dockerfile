@@ -12,8 +12,7 @@ RUN CGO_ENABLED=0 go build -o /bin/api      ./cmd/api      && \
     CGO_ENABLED=0 go build -o /bin/worker   ./cmd/worker   && \
     CGO_ENABLED=0 go build -o /bin/ingest   ./cmd/ingest   && \
     CGO_ENABLED=0 go build -o /bin/migrate  ./cmd/migrate  && \
-    CGO_ENABLED=0 go build -o /bin/cleanup  ./cmd/cleanup  && \
-    CGO_ENABLED=0 go build -o /bin/loadtest ./loadtest
+    CGO_ENABLED=0 go build -o /bin/cleanup  ./cmd/cleanup
 
 # ─── runtime ────────────────────────────────────────────────────────────────
 FROM alpine:3.21
@@ -26,7 +25,6 @@ COPY --from=builder /bin/worker   /bin/worker
 COPY --from=builder /bin/ingest   /bin/ingest
 COPY --from=builder /bin/migrate  /bin/migrate
 COPY --from=builder /bin/cleanup  /bin/cleanup
-COPY --from=builder /bin/loadtest /bin/loadtest
 
 COPY migrations /migrations
 
