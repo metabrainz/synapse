@@ -9,7 +9,7 @@ Synapse is an internal event fan-out and notification system for MetaBrainz. Int
 ```
 Internal service
       │
-      │  publish (tenant_id, user_id, event_type, payload)
+      │  publish (tenant_id, event_type, recipients[], payload)
       ▼
 RabbitMQ  events.ingest  queue
       │
