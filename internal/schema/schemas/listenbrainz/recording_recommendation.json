@@ -2,34 +2,63 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "RecordingRecommendationEvent",
   "type": "object",
-  "required": ["actor", "recording", "summary"],
+  "required": [
+    "actor",
+    "recording"
+  ],
   "properties": {
-    "actor":     { "$ref": "#/$defs/actor" },
-    "recording": { "$ref": "#/$defs/recording" },
-    "summary":   { "type": "string", "minLength": 1 }
+    "actor": {
+      "$ref": "#/$defs/actor"
+    },
+    "recording": {
+      "$ref": "#/$defs/recording"
+    }
   },
   "additionalProperties": false,
   "$defs": {
     "actor": {
       "title": "Actor",
       "type": "object",
-      "required": ["username", "url"],
+      "required": [
+        "username",
+        "url"
+      ],
       "properties": {
-        "username": { "type": "string", "minLength": 1 },
-        "url":      { "type": "string" }
+        "username": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string"
+        }
       },
       "additionalProperties": false
     },
     "recording": {
       "title": "Recording",
       "type": "object",
-      "required": ["track_name", "artist_name"],
+      "required": [
+        "track_name",
+        "artist_name"
+      ],
       "properties": {
-        "mbid":         { "type": "string" },
-        "track_name":   { "type": "string", "minLength": 1 },
-        "artist_name":  { "type": "string", "minLength": 1 },
-        "release_name": { "type": "string" },
-        "url":          { "type": "string" }
+        "mbid": {
+          "type": "string"
+        },
+        "track_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artist_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "release_name": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
       },
       "additionalProperties": false
     }

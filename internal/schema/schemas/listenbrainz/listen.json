@@ -2,48 +2,93 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ListenEvent",
   "type": "object",
-  "required": ["actor", "listen", "recording", "summary"],
+  "required": [
+    "actor",
+    "listen",
+    "recording"
+  ],
   "properties": {
-    "actor":     { "$ref": "#/$defs/actor" },
-    "listen":    { "$ref": "#/$defs/listen_meta" },
-    "recording": { "$ref": "#/$defs/recording" },
-    "summary":   { "type": "string", "minLength": 1 }
+    "actor": {
+      "$ref": "#/$defs/actor"
+    },
+    "listen": {
+      "$ref": "#/$defs/listen_meta"
+    },
+    "recording": {
+      "$ref": "#/$defs/recording"
+    }
   },
   "additionalProperties": false,
   "$defs": {
     "actor": {
       "title": "Actor",
       "type": "object",
-      "required": ["username", "url"],
+      "required": [
+        "username",
+        "url"
+      ],
       "properties": {
-        "username": { "type": "string", "minLength": 1 },
-        "url":      { "type": "string" }
+        "username": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string"
+        }
       },
       "additionalProperties": false
     },
     "listen_meta": {
       "title": "ListenMeta",
       "type": "object",
-      "required": ["listened_at"],
+      "required": [
+        "listened_at"
+      ],
       "properties": {
-        "listened_at":       { "type": "integer" },
-        "recording_msid":    { "type": "string" },
-        "music_service":     { "type": "string" },
-        "submission_client": { "type": "string" },
-        "duration_ms":       { "type": "integer", "minimum": 0 }
+        "listened_at": {
+          "type": "integer"
+        },
+        "recording_msid": {
+          "type": "string"
+        },
+        "music_service": {
+          "type": "string"
+        },
+        "submission_client": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
       "additionalProperties": false
     },
     "recording": {
       "title": "Recording",
       "type": "object",
-      "required": ["track_name", "artist_name"],
+      "required": [
+        "track_name",
+        "artist_name"
+      ],
       "properties": {
-        "mbid":         { "type": "string" },
-        "track_name":   { "type": "string", "minLength": 1 },
-        "artist_name":  { "type": "string", "minLength": 1 },
-        "release_name": { "type": "string" },
-        "url":          { "type": "string" }
+        "mbid": {
+          "type": "string"
+        },
+        "track_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artist_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "release_name": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
       },
       "additionalProperties": false
     }
