@@ -14,7 +14,7 @@ func TestRelayPublishesAndClearsOutbox(t *testing.T) {
 	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		map[string]any{"recipients": []string{"user-1"}, "event_type": "listen", "payload": testListenPayload()},
 		e.apiKey,
 	).Body.Close()
 
@@ -58,11 +58,11 @@ func TestRelayMultipleSubscribers(t *testing.T) {
 	e.waitForCacheWarm(e.apiKey, "user-2", "listen")
 
 	e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		map[string]any{"recipients": []string{"user-1"}, "event_type": "listen", "payload": testListenPayload()},
 		e.apiKey,
 	).Body.Close()
 	e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-2", "event_type": "listen", "payload": testListenPayload()},
+		map[string]any{"recipients": []string{"user-2"}, "event_type": "listen", "payload": testListenPayload()},
 		e.apiKey,
 	).Body.Close()
 

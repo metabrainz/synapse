@@ -13,7 +13,7 @@ func TestDeliveriesListByEvent(t *testing.T) {
 	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	resp := e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		map[string]any{"recipients": []string{"user-1"}, "event_type": "listen", "payload": testListenPayload()},
 		e.apiKey,
 	)
 	var out map[string]any
@@ -44,7 +44,7 @@ func TestDeliveriesEmptyWhenNoSubscribers(t *testing.T) {
 	e := setup(t)
 
 	resp := e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		map[string]any{"recipients": []string{"user-1"}, "event_type": "listen", "payload": testListenPayload()},
 		e.apiKey,
 	)
 	var out map[string]any

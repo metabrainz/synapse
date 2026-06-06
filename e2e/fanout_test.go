@@ -37,7 +37,7 @@ func TestThreeGateFanout(t *testing.T) {
 	// Wait for the fanout cache to pick up the new subscription.
 	waitFor(t, 2*time.Second, func() bool {
 		resp := e.tenantDo("POST", "/v1/events?dry_run=true",
-			map[string]any{"user_id": userID, "event_type": "listen", "payload": testListenPayload()},
+			map[string]any{"recipients": []string{userID}, "event_type": "listen", "payload": testListenPayload()},
 			apiKey,
 		)
 		defer resp.Body.Close()
@@ -53,11 +53,12 @@ func TestThreeGateFanout(t *testing.T) {
 	fireAndCount := func(t *testing.T) int {
 		t.Helper()
 		resp := e.tenantDo("POST", "/v1/events", map[string]any{
-			"user_id":    userID,
+			"recipients": []string{userID},
 			"event_type": "listen",
 			"payload": map[string]any{
-				"listened_at":    1779613826,
-				"track_metadata": map[string]any{"track_name": "Dope Shope", "artist_name": "Yo Yo Honey Singh"},
+				"actor":     map[string]any{"username": "test-user", "url": "https://listenbrainz.org/user/test-user"},
+				"listen":    map[string]any{"listened_at": 1779613826},
+				"recording": map[string]any{"track_name": "Dope Shope", "artist_name": "Yo Yo Honey Singh"},
 			},
 		}, apiKey)
 		if resp.StatusCode != http.StatusAccepted {
@@ -80,7 +81,7 @@ func TestThreeGateFanout(t *testing.T) {
 
 		waitFor(t, 2*time.Second, func() bool {
 			resp := e.tenantDo("POST", "/v1/events?dry_run=true",
-				map[string]any{"user_id": userID, "event_type": "listen", "payload": testListenPayload()},
+				map[string]any{"recipients": []string{userID}, "event_type": "listen", "payload": testListenPayload()},
 				apiKey,
 			)
 			defer resp.Body.Close()
@@ -91,10 +92,11 @@ func TestThreeGateFanout(t *testing.T) {
 		})
 
 		resp := e.tenantDo("POST", "/v1/events", map[string]any{
-			"user_id": userID, "event_type": "listen",
+			"recipients": []string{userID}, "event_type": "listen",
 			"payload": map[string]any{
-				"listened_at":    1779613826,
-				"track_metadata": map[string]any{"track_name": "Dope Shope", "artist_name": "Yo Yo Honey Singh"},
+				"actor":     map[string]any{"username": "test-user", "url": "https://listenbrainz.org/user/test-user"},
+				"listen":    map[string]any{"listened_at": 1779613826},
+				"recording": map[string]any{"track_name": "Dope Shope", "artist_name": "Yo Yo Honey Singh"},
 			},
 		}, apiKey)
 		time.Sleep(100 * time.Millisecond)
@@ -114,7 +116,7 @@ func TestThreeGateFanout(t *testing.T) {
 
 		waitFor(t, 2*time.Second, func() bool {
 			resp := e.tenantDo("POST", "/v1/events?dry_run=true",
-				map[string]any{"user_id": userID, "event_type": "listen", "payload": testListenPayload()},
+				map[string]any{"recipients": []string{userID}, "event_type": "listen", "payload": testListenPayload()},
 				apiKey,
 			)
 			defer resp.Body.Close()
@@ -125,10 +127,11 @@ func TestThreeGateFanout(t *testing.T) {
 		})
 
 		resp := e.tenantDo("POST", "/v1/events", map[string]any{
-			"user_id": userID, "event_type": "listen",
+			"recipients": []string{userID}, "event_type": "listen",
 			"payload": map[string]any{
-				"listened_at":    1779613826,
-				"track_metadata": map[string]any{"track_name": "Dope Shope", "artist_name": "Yo Yo Honey Singh"},
+				"actor":     map[string]any{"username": "test-user", "url": "https://listenbrainz.org/user/test-user"},
+				"listen":    map[string]any{"listened_at": 1779613826},
+				"recording": map[string]any{"track_name": "Dope Shope", "artist_name": "Yo Yo Honey Singh"},
 			},
 		}, apiKey)
 		time.Sleep(100 * time.Millisecond)
@@ -145,16 +148,14 @@ func TestSchemaValidation(t *testing.T) {
 	apiKey := e.apiKey // listenbrainz is in the static registry — no setup needed
 
 	validPayload := map[string]any{
-		"listened_at": 1779613826,
-		"track_metadata": map[string]any{
-			"track_name":  "Dope Shope",
-			"artist_name": "Yo Yo Honey Singh",
-		},
+		"actor":     map[string]any{"username": "test-user", "url": "https://listenbrainz.org/user/test-user"},
+		"listen":    map[string]any{"listened_at": 1779613826},
+		"recording": map[string]any{"track_name": "Dope Shope", "artist_name": "Yo Yo Honey Singh"},
 	}
 
 	t.Run("valid listen payload — 202", func(t *testing.T) {
 		resp := e.tenantDo("POST", "/v1/events", map[string]any{
-			"user_id": "1", "event_type": "listen", "payload": validPayload,
+			"recipients": []string{"1"}, "event_type": "listen", "payload": validPayload,
 		}, apiKey)
 		if resp.StatusCode != http.StatusAccepted {
 			var body map[string]any
@@ -164,38 +165,41 @@ func TestSchemaValidation(t *testing.T) {
 		resp.Body.Close()
 	})
 
-	t.Run("missing listened_at — 400", func(t *testing.T) {
+	t.Run("missing listen.listened_at — 400", func(t *testing.T) {
 		resp := e.tenantDo("POST", "/v1/events", map[string]any{
-			"user_id":    "1",
+			"recipients": []string{"1"},
 			"event_type": "listen",
 			"payload": map[string]any{
-				"track_metadata": map[string]any{"track_name": "Dope Shope", "artist_name": "Yo Yo Honey Singh"},
+				"actor":     map[string]any{"username": "u", "url": "https://listenbrainz.org/user/u"},
+				"listen":    map[string]any{},
+				"recording": map[string]any{"track_name": "Dope Shope", "artist_name": "Yo Yo Honey Singh"},
 			},
 		}, apiKey)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("expected 400 for missing listened_at, got %d", resp.StatusCode)
+			t.Fatalf("expected 400 for missing listen.listened_at, got %d", resp.StatusCode)
 		}
 	})
 
-	t.Run("missing track_name inside track_metadata — 400", func(t *testing.T) {
+	t.Run("missing recording.track_name — 400", func(t *testing.T) {
 		resp := e.tenantDo("POST", "/v1/events", map[string]any{
-			"user_id":    "1",
+			"recipients": []string{"1"},
 			"event_type": "listen",
 			"payload": map[string]any{
-				"listened_at":    1779613826,
-				"track_metadata": map[string]any{"artist_name": "Yo Yo Honey Singh"},
+				"actor":     map[string]any{"username": "u", "url": "https://listenbrainz.org/user/u"},
+				"listen":    map[string]any{"listened_at": 1779613826},
+				"recording": map[string]any{"artist_name": "Yo Yo Honey Singh"},
 			},
 		}, apiKey)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("expected 400 for missing track_name, got %d", resp.StatusCode)
+			t.Fatalf("expected 400 for missing recording.track_name, got %d", resp.StatusCode)
 		}
 	})
 
 	t.Run("unknown event type — 400", func(t *testing.T) {
 		resp := e.tenantDo("POST", "/v1/events", map[string]any{
-			"user_id": "1", "event_type": "not_registered", "payload": testListenPayload(),
+			"recipients": []string{"1"}, "event_type": "not_registered", "payload": testListenPayload(),
 		}, apiKey)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusBadRequest {
@@ -203,23 +207,26 @@ func TestSchemaValidation(t *testing.T) {
 		}
 	})
 
-	t.Run("full real-world payload with additional_info — 202", func(t *testing.T) {
+	t.Run("full real-world listen payload — 202", func(t *testing.T) {
 		resp := e.tenantDo("POST", "/v1/events", map[string]any{
-			"user_id":    "1",
+			"recipients": []string{"1"},
 			"event_type": "listen",
 			"payload": map[string]any{
-				"listened_at":    1779613826,
-				"recording_msid": "cbc6f6aa-b073-48db-8a2e-6dd69a428b12",
-				"track_metadata": map[string]any{
+				"actor": map[string]any{
+					"username": "yo-yo-fan",
+					"url":      "https://listenbrainz.org/user/yo-yo-fan",
+				},
+				"listen": map[string]any{
+					"listened_at":       1779613826,
+					"recording_msid":    "cbc6f6aa-b073-48db-8a2e-6dd69a428b12",
+					"music_service":     "spotify.com",
+					"duration_ms":       193608,
+					"submission_client": "listenbrainz-player",
+				},
+				"recording": map[string]any{
 					"track_name":   "Dope Shope",
 					"artist_name":  "Yo Yo Honey Singh, Deep Money",
 					"release_name": "International Villager",
-					"additional_info": map[string]any{
-						"duration_ms":   193608,
-						"music_service": "spotify.com",
-						"tracknumber":   5,
-						"artist_names":  []string{"Yo Yo Honey Singh", "Deep Money"},
-					},
 				},
 			},
 		}, apiKey)

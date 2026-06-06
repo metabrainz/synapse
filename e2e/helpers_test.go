@@ -125,6 +125,10 @@ func setup(t *testing.T) *env {
 		t.Fatalf("fanout cache: %v", err)
 	}
 
+	if err := adapter.Build(ctx, adapter.Options{Redis: rdb}); err != nil {
+		t.Fatalf("adapter.Build: %v", err)
+	}
+
 	fan := fanout.New(cache, adapter.MaxAttemptsFor, reg)
 	deduper := dedup.New(rdb)
 
@@ -135,6 +139,7 @@ func setup(t *testing.T) *env {
 			Introspector: stub,
 		},
 		pool,
+		rdb,
 		users.New(pool),
 		userchannels.New(pool),
 		usertenant.New(pool),
@@ -256,8 +261,14 @@ func waitFor(t *testing.T, timeout time.Duration, check func() bool) {
 // testListenPayload returns a minimal valid payload for the listenbrainz/listen event type.
 func testListenPayload() map[string]any {
 	return map[string]any{
-		"listened_at": time.Now().Unix(),
-		"track_metadata": map[string]any{
+		"actor": map[string]any{
+			"username": "test-user",
+			"url":      "https://listenbrainz.org/user/test-user",
+		},
+		"listen": map[string]any{
+			"listened_at": time.Now().Unix(),
+		},
+		"recording": map[string]any{
 			"track_name":  "Test Track",
 			"artist_name": "Test Artist",
 		},
@@ -270,7 +281,7 @@ func (e *env) waitForCacheWarm(apiKey, userID, eventType string) {
 	e.t.Helper()
 	waitFor(e.t, 2*time.Second, func() bool {
 		resp := e.tenantDo("POST", "/v1/events?dry_run=true",
-			map[string]any{"user_id": userID, "event_type": eventType, "payload": testListenPayload()},
+			map[string]any{"recipients": []string{userID}, "event_type": eventType, "payload": testListenPayload()},
 			apiKey,
 		)
 		defer resp.Body.Close()

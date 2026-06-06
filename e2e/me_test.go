@@ -324,11 +324,12 @@ func TestMeFullFlow(t *testing.T) {
 	e.waitForCacheWarm(apiKey, userID, "listen")
 
 	evResp := e.tenantDo("POST", "/v1/events", map[string]any{
-		"user_id":    userID,
+		"recipients": []string{userID},
 		"event_type": "listen",
 		"payload": map[string]any{
-			"listened_at":    1779613826,
-			"track_metadata": map[string]any{"track_name": "Dope Shope", "artist_name": "Yo Yo Honey Singh"},
+			"actor":     map[string]any{"username": "test-user", "url": "https://listenbrainz.org/user/test-user"},
+			"listen":    map[string]any{"listened_at": 1779613826},
+			"recording": map[string]any{"track_name": "Dope Shope", "artist_name": "Yo Yo Honey Singh"},
 		},
 	}, apiKey)
 	defer evResp.Body.Close()

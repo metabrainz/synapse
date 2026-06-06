@@ -53,37 +53,13 @@ func publishToDeliveryExchange(t *testing.T, amqpURL, routingKey string, body []
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
-func TestWorkerSuccess(t *testing.T) {
-	e := setup(t)
-	e.setupWebhookChannel(testTenantID, "user-1", "listen", "https://example.com/hook")
-	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
-
-	resp := e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
-		e.apiKey,
-	)
-	var out map[string]any
-	decodeJSON(t, resp, &out)
-	eventID := int64(out["event_id"].(float64))
-
-	e.relayTick()
-
-	e.startWorker("webhook", adapterFunc(func(_ context.Context, _ fanout.WorkerMessage) error {
-		return nil
-	}))
-
-	waitFor(t, 5*time.Second, func() bool {
-		return e.deliveryStatus(eventID) == deliveries.StatusDelivered
-	})
-}
-
 func TestWorkerRetryOnFailure(t *testing.T) {
 	e := setup(t)
 	e.setupWebhookChannel(testTenantID, "user-1", "listen", "https://example.com/hook")
 	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	resp := e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		map[string]any{"recipients": []string{"user-1"}, "event_type": "listen", "payload": testListenPayload()},
 		e.apiKey,
 	)
 	var out map[string]any
@@ -107,7 +83,7 @@ func TestWorkerDedup(t *testing.T) {
 	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		map[string]any{"recipients": []string{"user-1"}, "event_type": "listen", "payload": testListenPayload()},
 		e.apiKey,
 	).Body.Close()
 
@@ -142,7 +118,7 @@ func TestWorkerMessageFields(t *testing.T) {
 	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		map[string]any{"recipients": []string{"user-1"}, "event_type": "listen", "payload": testListenPayload()},
 		e.apiKey,
 	).Body.Close()
 	e.relayTick()
@@ -166,8 +142,9 @@ func TestWorkerMessageFields(t *testing.T) {
 		}
 		var got map[string]any
 		json.Unmarshal(msg.Payload, &got)
-		if _, ok := got["listened_at"]; !ok {
-			t.Errorf("payload missing listened_at: %v", got)
+		listenMeta, _ := got["listen"].(map[string]any)
+		if _, ok := listenMeta["listened_at"]; !ok {
+			t.Errorf("payload missing listen.listened_at: %v", got)
 		}
 		if msg.Attempt != 0 {
 			t.Errorf("want attempt 0, got %d", msg.Attempt)

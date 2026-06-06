@@ -69,7 +69,7 @@ func TestPipelineHTTPIngest(t *testing.T) {
 
 	resp := e.tenantDo("POST", "/v1/events",
 		map[string]any{
-			"user_id":    "user-1",
+			"recipients": []string{"user-1"},
 			"event_type": "listen",
 			"payload":    testListenPayload(),
 		},
@@ -125,10 +125,10 @@ func TestPipelineAMQPIngest(t *testing.T) {
 
 	payload, _ := json.Marshal(testListenPayload())
 	publishIngestEvent(t, e.amqpURL, ingest.Message{
-		TenantID:  testTenantID,
-		UserID:    "user-1",
-		EventType: "listen",
-		Payload:   json.RawMessage(payload),
+		TenantID:   testTenantID,
+		Recipients: []string{"user-1"},
+		EventType:  "listen",
+		Payload:    json.RawMessage(payload),
 	})
 
 	waitFor(t, 5*time.Second, func() bool {

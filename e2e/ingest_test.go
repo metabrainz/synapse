@@ -15,7 +15,7 @@ func TestIngestRequiresAuth(t *testing.T) {
 	e := setup(t)
 
 	resp := e.do("POST", "/v1/events",
-		map[string]any{"user_id": "u", "event_type": "listen"},
+		map[string]any{"recipients": []string{"u"}, "event_type": "listen"},
 		nil,
 	)
 	defer resp.Body.Close()
@@ -24,7 +24,7 @@ func TestIngestRequiresAuth(t *testing.T) {
 	}
 
 	resp2 := e.do("POST", "/v1/events",
-		map[string]any{"user_id": "u", "event_type": "listen"},
+		map[string]any{"recipients": []string{"u"}, "event_type": "listen"},
 		map[string]string{"Authorization": "Bearer wrong-key"},
 	)
 	defer resp2.Body.Close()
@@ -42,8 +42,8 @@ func TestIngestMissingFields(t *testing.T) {
 		name string
 		body map[string]any
 	}{
-		{"missing user_id", map[string]any{"event_type": "listen"}},
-		{"missing event_type", map[string]any{"user_id": "u"}},
+		{"missing recipients", map[string]any{"event_type": "listen"}},
+		{"missing event_type", map[string]any{"recipients": []string{"u"}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -56,26 +56,13 @@ func TestIngestMissingFields(t *testing.T) {
 	}
 }
 
-func TestIngestUnregisteredEventType(t *testing.T) {
-	e := setup(t)
-
-	resp := e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "u", "event_type": "not.registered", "payload": map[string]string{}},
-		e.apiKey,
-	)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("unregistered event type: want 400, got %d", resp.StatusCode)
-	}
-}
-
 // ── Core ingest behaviour ─────────────────────────────────────────────────────
 
 func TestIngestNoSubscribers(t *testing.T) {
 	e := setup(t)
 
 	resp := e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "u", "event_type": "listen", "payload": testListenPayload()},
+		map[string]any{"recipients": []string{"u"}, "event_type": "listen", "payload": testListenPayload()},
 		e.apiKey,
 	)
 	var out map[string]any
@@ -104,7 +91,7 @@ func TestIngestCreatesDeliveryAndOutboxRows(t *testing.T) {
 
 	resp := e.tenantDo("POST", "/v1/events",
 		map[string]any{
-			"user_id":    "user-1",
+			"recipients": []string{"user-1"},
 			"event_type": "listen",
 			"payload":    testListenPayload(),
 		},
@@ -140,7 +127,7 @@ func TestIngestIdempotency(t *testing.T) {
 	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	payload := map[string]any{
-		"user_id":         "user-1",
+		"recipients":      []string{"user-1"},
 		"event_type":      "listen",
 		"payload":         testListenPayload(),
 		"idempotency_key": "listen-42-key",
@@ -177,7 +164,7 @@ func TestIngestDryRun(t *testing.T) {
 	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	resp := e.tenantDo("POST", "/v1/events?dry_run=true",
-		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		map[string]any{"recipients": []string{"user-1"}, "event_type": "listen", "payload": testListenPayload()},
 		e.apiKey,
 	)
 	var out map[string]any

@@ -16,7 +16,7 @@ func TestCleanupReconcileStale(t *testing.T) {
 	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	resp := e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		map[string]any{"recipients": []string{"user-1"}, "event_type": "listen", "payload": testListenPayload()},
 		e.apiKey,
 	)
 	var out map[string]any
@@ -49,7 +49,7 @@ func TestCleanupReconcileDoesNotTouchRecentDeliveries(t *testing.T) {
 	e.waitForCacheWarm(e.apiKey, "user-1", "listen")
 
 	resp := e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "user-1", "event_type": "listen", "payload": testListenPayload()},
+		map[string]any{"recipients": []string{"user-1"}, "event_type": "listen", "payload": testListenPayload()},
 		e.apiKey,
 	)
 	var out map[string]any
@@ -69,19 +69,22 @@ func TestCleanupReconcileDoesNotTouchRecentDeliveries(t *testing.T) {
 func TestCleanupPruneOldEvents(t *testing.T) {
 	e := setup(t)
 
-	e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "u1", "event_type": "listen", "payload": testListenPayload()},
+	resp1 := e.tenantDo("POST", "/v1/events",
+		map[string]any{"recipients": []string{"u1"}, "event_type": "listen", "payload": testListenPayload()},
 		e.apiKey,
-	).Body.Close()
+	)
+	var out1 map[string]any
+	decodeJSON(t, resp1, &out1)
+	oldEventID := int64(out1["event_id"].(float64))
+
 	e.tenantDo("POST", "/v1/events",
-		map[string]any{"user_id": "u2", "event_type": "listen", "payload": testListenPayload()},
+		map[string]any{"recipients": []string{"u2"}, "event_type": "listen", "payload": testListenPayload()},
 		e.apiKey,
 	).Body.Close()
 
 	if _, err := e.pool.Exec(e.ctx,
-		`UPDATE events SET created_at = NOW() - INTERVAL '8 days'
-		 WHERE tenant_id = $1 AND user_id = 'u1'`,
-		testTenantID,
+		`UPDATE events SET created_at = NOW() - INTERVAL '8 days' WHERE id = $1`,
+		oldEventID,
 	); err != nil {
 		t.Fatalf("backdate event: %v", err)
 	}
