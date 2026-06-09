@@ -11,10 +11,10 @@ import (
 	"github.com/metabrainz/synapse/internal/adapter"
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
 	"github.com/metabrainz/synapse/internal/config"
+	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/ingest"
 	"github.com/metabrainz/synapse/internal/observability"
-	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 )
@@ -51,7 +51,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	reg := schema.New(schema.KnownTenants)
+	reg := eventtype.NewRegistry(eventtype.KnownTenants)
 
 	subRepo := subscriptions.New(pool)
 	cache := fanout.NewCache(pool, subRepo, cfg.Postgres.DirectDSN, reg)

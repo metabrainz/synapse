@@ -11,10 +11,10 @@ import (
 	"github.com/metabrainz/synapse/internal/adapter"
 	"github.com/metabrainz/synapse/internal/api/middleware"
 	"github.com/metabrainz/synapse/internal/dedup"
+	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/ratelimit"
-	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
 	"github.com/metabrainz/synapse/internal/store/usereventsubs"
 	"github.com/metabrainz/synapse/internal/store/users"
@@ -44,7 +44,7 @@ func NewRouter(
 	subscriptions *usereventsubs.Repo,
 	fan *fanout.Fanout,
 	deduper *dedup.Deduper,
-	reg *schema.Registry,
+	reg *eventtype.Registry,
 ) http.Handler {
 	r := chi.NewRouter()
 	r.Use(sentryhttp.New(sentryhttp.Options{Repanic: true}).Handle)

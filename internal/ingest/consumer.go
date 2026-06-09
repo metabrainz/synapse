@@ -14,8 +14,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
+	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
-	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/events"
 	"golang.org/x/sync/errgroup"
@@ -41,10 +41,10 @@ type Message struct {
 type Consumer struct {
 	pool *pgxpool.Pool
 	fan  *fanout.Fanout
-	reg  *schema.Registry
+	reg  *eventtype.Registry
 }
 
-func NewConsumer(pool *pgxpool.Pool, fan *fanout.Fanout, reg *schema.Registry) *Consumer {
+func NewConsumer(pool *pgxpool.Pool, fan *fanout.Fanout, reg *eventtype.Registry) *Consumer {
 	return &Consumer{pool: pool, fan: fan, reg: reg}
 }
 
@@ -70,7 +70,7 @@ func (c *Consumer) Run(ctx context.Context, amqpURL string, workers, batchSize, 
 
 // parseMessages decodes, field-validates, and schema-validates raw AMQP bodies,
 // dropping invalid messages with a log line. All valid events share the same timestamp.
-func parseMessages(bodies [][]byte, now time.Time, reg *schema.Registry) []events.Event {
+func parseMessages(bodies [][]byte, now time.Time, reg *eventtype.Registry) []events.Event {
 	evs := make([]events.Event, 0, len(bodies))
 	for _, body := range bodies {
 		var msg Message

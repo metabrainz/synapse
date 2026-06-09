@@ -9,9 +9,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metabrainz/synapse/internal/api/middleware"
 	"github.com/metabrainz/synapse/internal/dedup"
+	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/ingest"
-	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/events"
 )
@@ -20,7 +20,7 @@ type ingestHandler struct {
 	pool    *pgxpool.Pool
 	fan     *fanout.Fanout
 	deduper *dedup.Deduper
-	reg     *schema.Registry
+	reg     *eventtype.Registry
 }
 
 type ingestRequest struct {

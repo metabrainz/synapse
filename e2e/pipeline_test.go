@@ -11,9 +11,9 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
+	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/ingest"
-	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store/deliveries"
 	"github.com/metabrainz/synapse/internal/store/outbox"
 )
@@ -25,7 +25,7 @@ func (e *env) startIngestConsumer() context.CancelFunc {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		c := ingest.NewConsumer(e.pool, e.fan, schema.New(schema.KnownTenants))
+		c := ingest.NewConsumer(e.pool, e.fan, eventtype.NewRegistry(eventtype.KnownTenants))
 		c.Run(ctx, e.amqpURL, 1, 10, 50)
 	}()
 	e.t.Cleanup(func() { cancel(); <-done })

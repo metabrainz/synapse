@@ -25,7 +25,7 @@ func (h *meHandler) listTenantEventTypes(w http.ResponseWriter, r *http.Request)
 	}
 	out := make([]eventTypeResponse, len(eventTypes))
 	for i, et := range eventTypes {
-		out[i] = eventTypeResponse{Name: et.Name, AllowedChannels: et.AllowedChannels}
+		out[i] = eventTypeResponse{Name: et.EventName(), AllowedChannels: et.AllowedChannels()}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

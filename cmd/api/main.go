@@ -16,11 +16,11 @@ import (
 	"github.com/metabrainz/synapse/internal/api"
 	"github.com/metabrainz/synapse/internal/config"
 	"github.com/metabrainz/synapse/internal/dedup"
+	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/observability"
 	"github.com/metabrainz/synapse/internal/ratelimit"
-	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
@@ -81,26 +81,27 @@ func main() {
 		slog.Warn("oauth: not configured — /v1/me routes will return 503")
 	}
 
+	// Build the event-type registry first.
+	tenants := eventtype.KnownTenants
+	for i := range tenants {
+		if tc, ok := cfg.Tenants[tenants[i].ID]; ok {
+			tenants[i].APIKey = tc.APIKey
+		}
+	}
+	reg := eventtype.NewRegistry(tenants)
+
 	if err := adapter.Build(ctx, adapter.Options{
 		Telegram: adapter.TelegramOptions{
 			BotToken:      cfg.Telegram.BotToken,
 			WebhookURL:    cfg.Telegram.WebhookURL,
 			WebhookSecret: cfg.Telegram.WebhookSecret,
 		},
-		Redis: rdb,
+		Redis:    rdb,
+		Registry: reg,
 	}); err != nil {
 		slog.Error("adapter: startup failed", "err", err)
 		os.Exit(1)
 	}
-
-	// Inject API keys from config into the static registry before building it.
-	tenants := schema.KnownTenants
-	for i := range tenants {
-		if tc, ok := cfg.Tenants[tenants[i].ID]; ok {
-			tenants[i].APIKey = tc.APIKey
-		}
-	}
-	reg := schema.New(tenants)
 
 	cache := fanout.NewCache(pool, subRepo, cfg.Postgres.DirectDSN, reg)
 	if err := cache.Start(ctx); err != nil {

@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/metabrainz/synapse/internal/schema"
+	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/deliveries"
 	"github.com/metabrainz/synapse/internal/store/events"
@@ -66,11 +66,11 @@ func newWorkerMessage(deliveryID int64, ev events.Event, ch subscriptions.Active
 type Fanout struct {
 	subs        Lookup
 	maxAttempts func(channelType string) int
-	reg         *schema.Registry
+	reg         *eventtype.Registry
 }
 
 // New creates a Fanout. Pass adapter.MaxAttemptsFor as maxAttempts in production.
-func New(subs Lookup, maxAttempts func(channelType string) int, reg *schema.Registry) *Fanout {
+func New(subs Lookup, maxAttempts func(channelType string) int, reg *eventtype.Registry) *Fanout {
 	return &Fanout{subs: subs, maxAttempts: maxAttempts, reg: reg}
 }
 

@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/metabrainz/synapse/internal/api/middleware"
-	"github.com/metabrainz/synapse/internal/schema"
+	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
 	"github.com/metabrainz/synapse/internal/store/usereventsubs"
 	"github.com/metabrainz/synapse/internal/store/usertenant"
@@ -14,7 +14,7 @@ type meHandler struct {
 	channels       *userchannels.Repo
 	tenantMappings *usertenant.Repo
 	subscriptions  *usereventsubs.Repo
-	reg            *schema.Registry
+	reg            *eventtype.Registry
 }
 
 func requireUser(w http.ResponseWriter, r *http.Request) (string, bool) {

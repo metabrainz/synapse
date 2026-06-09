@@ -24,9 +24,9 @@ import (
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
 	"github.com/metabrainz/synapse/internal/config"
 	"github.com/metabrainz/synapse/internal/dedup"
+	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/oauth"
-	"github.com/metabrainz/synapse/internal/schema"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/outbox"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
@@ -110,13 +110,13 @@ func setup(t *testing.T) *env {
 	}
 
 	// Build registry with a fixed test API key for the listenbrainz tenant.
-	tenants := schema.KnownTenants
+	tenants := eventtype.KnownTenants
 	for i := range tenants {
 		if tenants[i].ID == testTenantID {
 			tenants[i].APIKey = testAPIKey
 		}
 	}
-	reg := schema.New(tenants)
+	reg := eventtype.NewRegistry(tenants)
 
 	subRepo := subscriptions.New(pool)
 	// "" → listenDSN derived from pool config; correct when there is no PgBouncer.

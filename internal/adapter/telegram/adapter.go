@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/redis/go-redis/v9"
 )
@@ -25,16 +26,18 @@ type Adapter struct {
 	webhookURL string
 	secret     string
 	rl         *rateLimiter // nil when no Redis is configured
+	renderer   *renderer
 }
 
 // New creates the Telegram adapter.
 // rdb may be nil; when nil, the per-chat and global rate limit pre-checks are
 // skipped (the adapter still handles 429 responses from the API gracefully).
-func New(botToken, webhookURL, webhookSecret string, rdb *redis.Client) *Adapter {
+func New(botToken, webhookURL, webhookSecret string, rdb *redis.Client, reg *eventtype.Registry) *Adapter {
 	a := &Adapter{
 		bot:        NewBot(botToken),
 		webhookURL: webhookURL,
 		secret:     webhookSecret,
+		renderer:   newRenderer(reg),
 	}
 	if rdb != nil {
 		a.rl = newRateLimiter(rdb)
@@ -72,5 +75,5 @@ func (a *Adapter) Deliver(ctx context.Context, msg fanout.WorkerMessage) error {
 	if cfg.ChatID == "" {
 		return fmt.Errorf("channel config missing chat_id")
 	}
-	return a.bot.Send(ctx, cfg.ChatID, renderMessage(msg))
+	return a.bot.Send(ctx, cfg.ChatID, a.renderer.render(msg))
 }

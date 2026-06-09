@@ -14,6 +14,7 @@ import (
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
 	"github.com/metabrainz/synapse/internal/config"
 	"github.com/metabrainz/synapse/internal/dedup"
+	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/observability"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/worker"
@@ -53,11 +54,14 @@ func main() {
 	}
 	defer rdb.Close()
 
+	reg := eventtype.NewRegistry(eventtype.KnownTenants)
+
 	if err := adapter.Build(ctx, adapter.Options{
 		Telegram: adapter.TelegramOptions{
 			BotToken: cfg.Telegram.BotToken,
 		},
-		Redis: rdb,
+		Redis:    rdb,
+		Registry: reg,
 	}); err != nil {
 		slog.Error("adapter: startup failed", "err", err)
 		os.Exit(1)
