@@ -20,6 +20,8 @@ func InitSentry(dsn, environment, release string) (func(), error) {
 		Environment:      environment,
 		Release:          release,
 		AttachStacktrace: true,
+		TracesSampleRate: 1.0,
+		EnableLogs:       true,
 	}); err != nil {
 		return func() {}, fmt.Errorf("sentry init: %w", err)
 	}
