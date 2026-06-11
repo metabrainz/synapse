@@ -9,7 +9,7 @@
 http:
   port: 8080
 
-{{ $pg := service "pgbouncer-master" -}}
+{{ $pg := service "virtual.virtual-pgbouncer-master" -}}
 postgres:
   host: {{ if $pg }}{{ with index $pg 0 }}{{ .Address }}{{ end }}{{ else }}SERVICEDOESNOTEXIST_pgbouncer-master{{ end }}
   port: {{ if $pg }}{{ with index $pg 0 }}{{ .Port }}{{ end }}{{ else }}0{{ end }}
@@ -20,15 +20,15 @@ postgres:
   pgbouncer: true
   direct_dsn: "{{ template "KEY" "pg_direct_dsn" }}"
 
-{{ $redis := service "listenbrainz-redis" -}}
+{{ $redis := service "synapse-redis" -}}
 redis:
-  addr: {{ if $redis }}{{ with index $redis 0 }}{{ .Address }}:{{ .Port }}{{ end }}{{ else }}SERVICEDOESNOTEXIST_listenbrainz-redis{{ end }}
+  addr: {{ if $redis }}{{ with index $redis 0 }}{{ .Address }}:{{ .Port }}{{ end }}{{ else }}SERVICEDOESNOTEXIST_synapse-redis{{ end }}
   password: ""
   db: 0
 
-{{ $rmq := service "rabbitmq-listenbrainz" -}}
+{{ $rmq := service "rabbitmq-jelly" -}}
 rabbitmq:
-  url: amqp://{{ template "KEY" "rabbitmq_user" }}:{{ template "KEY" "rabbitmq_password" }}@{{ if $rmq }}{{ with index $rmq 0 }}{{ .Address }}:{{ .Port }}{{ end }}{{ else }}SERVICEDOESNOTEXIST_rabbitmq-listenbrainz{{ end }}/{{ template "KEY" "rabbitmq_vhost" }}
+  url: amqp://{{ template "KEY" "rabbitmq_user" }}:{{ template "KEY" "rabbitmq_password" }}@{{ if $rmq }}{{ with index $rmq 0 }}{{ .Address }}:{{ .Port }}{{ end }}{{ else }}SERVICEDOESNOTEXIST_rabbitmq-jelly{{ end }}/{{ template "KEY" "rabbitmq_vhost" }}
 
 oauth:
   client_id: "{{ template "KEY" "oauth_client_id" }}"
