@@ -1,0 +1,19 @@
+#!/bin/sh
+
+CONFIG=/etc/synapse/config.yaml
+
+keyerrors=$(grep KEYDOESNOTEXIST "$CONFIG" 2>/dev/null)
+if [ -n "$keyerrors" ]; then
+    echo "synapse: missing Consul KV keys in rendered config:" >&2
+    echo "$keyerrors" >&2
+    exit 10
+fi
+
+serviceerrors=$(grep SERVICEDOESNOTEXIST "$CONFIG" 2>/dev/null)
+if [ -n "$serviceerrors" ]; then
+    echo "synapse: missing Consul services in rendered config:" >&2
+    echo "$serviceerrors" >&2
+    exit 11
+fi
+
+exec "$@"

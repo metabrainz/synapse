@@ -1,0 +1,74 @@
+{{- define "KEY" -}}
+{{- keyOrDefault (printf "docker-server-configs/Synapse/config.%s.json/%s" (env "DEPLOY_ENV") .) (printf "KEYDOESNOTEXIST_%s" .) -}}
+{{- end -}}
+
+{{- define "OPTKEY" -}}
+{{- keyOrDefault (printf "docker-server-configs/Synapse/config.%s.json/%s" (env "DEPLOY_ENV") .) "" -}}
+{{- end -}}
+
+http:
+  port: 8080
+
+{{ $pg := service "pgbouncer-master" -}}
+postgres:
+  host: {{ if $pg }}{{ with index $pg 0 }}{{ .Address }}{{ end }}{{ else }}SERVICEDOESNOTEXIST_pgbouncer-master{{ end }}
+  port: {{ if $pg }}{{ with index $pg 0 }}{{ .Port }}{{ end }}{{ else }}0{{ end }}
+  user: synapse
+  password: "{{ template "KEY" "pg_password" }}"
+  dbname: synapse
+  sslmode: disable
+  pgbouncer: true
+  direct_dsn: "{{ template "KEY" "pg_direct_dsn" }}"
+
+{{ $redis := service "listenbrainz-redis" -}}
+redis:
+  addr: {{ if $redis }}{{ with index $redis 0 }}{{ .Address }}:{{ .Port }}{{ end }}{{ else }}SERVICEDOESNOTEXIST_listenbrainz-redis{{ end }}
+  password: ""
+  db: 0
+
+{{ $rmq := service "rabbitmq-listenbrainz" -}}
+rabbitmq:
+  url: amqp://{{ template "KEY" "rabbitmq_user" }}:{{ template "KEY" "rabbitmq_password" }}@{{ if $rmq }}{{ with index $rmq 0 }}{{ .Address }}:{{ .Port }}{{ end }}{{ else }}SERVICEDOESNOTEXIST_rabbitmq-listenbrainz{{ end }}/{{ template "KEY" "rabbitmq_vhost" }}
+
+oauth:
+  client_id: "{{ template "KEY" "oauth_client_id" }}"
+  client_secret: "{{ template "KEY" "oauth_client_secret" }}"
+  introspection_url: "https://musicbrainz.org/new-oauth2/introspect"
+
+telegram:
+  bot_token: "{{ template "OPTKEY" "telegram_bot_token" }}"
+  webhook_url: "{{ template "OPTKEY" "telegram_webhook_url" }}"
+  webhook_secret: "{{ template "OPTKEY" "telegram_webhook_secret" }}"
+
+relay:
+  outbox_poll_ms: 100
+  workers: 4
+  batch_size: 100
+
+ingest:
+  workers: 4
+  batch_size: 50
+  drain_ms: 10
+
+worker:
+  db_pool: 15
+  channels:
+    webhook:
+      concurrency: 10
+      prefetch: 10
+    telegram:
+      concurrency: 5
+      prefetch: 5
+
+rate_limit:
+  burst: 100
+  rate_per_sec: 50
+
+observability:
+  sentry_dsn: "{{ template "KEY" "sentry_dsn" }}"
+  environment: "{{ env "DEPLOY_ENV" }}"
+  release: "{{ env "GIT_SHA" }}"
+
+tenants:
+  listenbrainz:
+    api_key: "{{ template "KEY" "tenants_listenbrainz_api_key" }}"
