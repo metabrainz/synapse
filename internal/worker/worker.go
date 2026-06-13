@@ -38,7 +38,7 @@ func Handler(
 	deduper *dedup.Deduper,
 	pool *pgxpool.Pool,
 ) rabbitmq.Handler {
-	return func(ctx context.Context, body []byte) (retErr error) {
+	return func(ctx context.Context, body []byte) error {
 		var msg fanout.WorkerMessage
 		if err := json.Unmarshal(body, &msg); err != nil {
 			return fmt.Errorf("unmarshal worker message: %w", err)
@@ -64,17 +64,21 @@ func Handler(
 			slog.Info("worker: skipping duplicate", "delivery_id", msg.DeliveryID)
 			return nil
 		}
-		// Capture before msg.Attempt is mutated to nextAttempt below; defer reads this
-		// so a Nack clears the right key and redelivery is not silently suppressed.
+		// Capture before msg.Attempt is mutated to nextAttempt below.
+		// delivered stays false on any non-success path — including panics, which never
+		// set a named return — so the dedup key is always cleared on failure and
+		// redelivery is not silently suppressed.
 		originalAttempt := msg.Attempt
+		delivered := false
 		defer func() {
-			if retErr != nil {
+			if !delivered {
 				deduper.DeleteSeen(ctx, msg.DeliveryID, originalAttempt)
 			}
 		}()
 
 		deliveryErr := ad.Deliver(ctx, msg)
 		if deliveryErr == nil {
+			delivered = true
 			if dbErr := deliveries.UpdateStatus(ctx, pool, msg.DeliveryID, deliveries.StatusDelivered, msg.Attempt+1, nil); dbErr != nil {
 				slog.Error("worker: mark delivered", "delivery_id", msg.DeliveryID, "err", dbErr)
 			}
