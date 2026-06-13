@@ -33,6 +33,9 @@ func Build(ctx context.Context, opts Options) error {
 		if opts.Registry == nil {
 			return fmt.Errorf("adapter: Telegram requires a non-nil Registry")
 		}
+		if opts.Telegram.WebhookURL != "" && opts.Telegram.WebhookSecret == "" {
+			return fmt.Errorf("adapter: telegram webhook_secret is required when webhook_url is set")
+		}
 		Registry[Telegram] = telegram.New(
 			opts.Telegram.BotToken,
 			opts.Telegram.WebhookURL,

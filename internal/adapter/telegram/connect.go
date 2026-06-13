@@ -26,7 +26,10 @@ type connectHandler struct {
 	secret   string
 }
 
+// A connect key is used to store the token and user ID during the connect flow.
 func connectKey(token string) string     { return "synapse:tg:connect:" + token }
+
+// A done key is used to store the channel ID after the connect flow is complete.
 func connectDoneKey(token string) string { return "synapse:tg:connect:done:" + token }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -61,8 +64,11 @@ func (a *Adapter) MountRoutes(r chi.Router, userMW func(http.Handler) http.Handl
 }
 
 // GET /v1/me/channels/telegram/connect
-func (h *connectHandler) initiate(w http.ResponseWriter, r *http.Request) {
-	uid, ok := requireUser(w, r)
+/*
+	Initiates the connect flow by generating a random token and storing it in Redis.
+*/
+func (h *connectHandler) initiate(w http.ResponseWriter, req *http.Request) {
+	uid, ok := requireUser(w, req)
 	if !ok {
 		return
 	}
@@ -74,7 +80,7 @@ func (h *connectHandler) initiate(w http.ResponseWriter, r *http.Request) {
 	}
 	token := hex.EncodeToString(raw)
 
-	ctx := r.Context()
+	ctx := req.Context()
 	if err := h.rdb.Set(ctx, connectKey(token), uid, connectTTL).Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "token storage failed")
 		return
@@ -93,13 +99,27 @@ func (h *connectHandler) initiate(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /v1/me/channels/telegram/connect/{token}
-func (h *connectHandler) status(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireUser(w, r); !ok {
+/*
+	Checks the status of the connect flow by looking up the token in Redis.
+*/
+func (h *connectHandler) status(w http.ResponseWriter, req *http.Request) {
+	uid, ok := requireUser(w, req)
+	if !ok {
 		return
 	}
-	token := chi.URLParam(r, "token")
 
-	channelID, err := h.rdb.Get(r.Context(), connectDoneKey(token)).Result()
+	// Get the token from the URL path.
+	token := chi.URLParam(req, "token")
+	ctx := req.Context()
+
+	// Check if the token belongs to the user.
+	if owner, err := h.rdb.Get(ctx, connectKey(token)).Result(); err == nil && owner != uid {
+		writeError(w, http.StatusForbidden, "token does not belong to this user")
+		return
+	}
+
+	// Check if the connect flow is complete.
+	channelID, err := h.rdb.Get(ctx, connectDoneKey(token)).Result()
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "pending"})
 		return
@@ -111,12 +131,16 @@ func (h *connectHandler) status(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /internal/telegram/webhook
-func (h *connectHandler) webhook(w http.ResponseWriter, r *http.Request) {
-	if h.secret != "" && r.Header.Get("X-Telegram-Bot-Api-Secret-Token") != h.secret {
+/*
+	Handles the Telegram webhook by verifying the secret token and parsing the update.
+*/
+func (h *connectHandler) webhook(w http.ResponseWriter, req *http.Request) {
+	if h.secret == "" || req.Header.Get("X-Telegram-Bot-Api-Secret-Token") != h.secret {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 
+	// Parse the update from the request body.
 	var update struct {
 		Message *struct {
 			Text string `json:"text"`
@@ -128,20 +152,22 @@ func (h *connectHandler) webhook(w http.ResponseWriter, r *http.Request) {
 			} `json:"from"`
 		} `json:"message"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&update); err != nil || update.Message == nil {
+	if err := json.NewDecoder(req.Body).Decode(&update); err != nil || update.Message == nil {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
 	text := strings.TrimSpace(update.Message.Text)
 	chatID := strconv.FormatInt(update.Message.Chat.ID, 10)
-	ctx := r.Context()
 
+	// Check if the message is a start command.
 	if !strings.HasPrefix(text, "/start") {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
+	// Get the token from the start command.
+	ctx := req.Context()
 	token := strings.TrimSpace(strings.TrimPrefix(text, "/start"))
 	if token == "" {
 		_ = h.bot.Send(ctx, chatID, "Open the Synapse UI and click \"Connect Telegram\" to get your personal link.")
@@ -154,7 +180,7 @@ func (h *connectHandler) webhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *connectHandler) handleConnect(ctx context.Context, chatID, token, firstName string) {
-	userID, err := h.rdb.Get(ctx, connectKey(token)).Result()
+	userID, err := h.rdb.GetDel(ctx, connectKey(token)).Result()
 	if err != nil {
 		_ = h.bot.Send(ctx, chatID, "This link has expired or is invalid. Please generate a new one from the Synapse UI.")
 		return
@@ -178,7 +204,5 @@ func (h *connectHandler) handleConnect(ctx context.Context, chatID, token, first
 	}
 
 	h.rdb.Set(ctx, connectDoneKey(token), strconv.FormatInt(channelID, 10), connectTTL)
-	h.rdb.Del(ctx, connectKey(token))
-
 	_ = h.bot.Send(ctx, chatID, "✓ Connected! You'll receive Synapse notifications here.")
 }
