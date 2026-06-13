@@ -16,6 +16,11 @@ func (h *meHandler) listSubscriptions(w http.ResponseWriter, r *http.Request) {
 	}
 	tenantID := chi.URLParam(r, "tenant_id")
 
+	if !h.reg.HasTenant(tenantID) {
+		writeError(w, http.StatusNotFound, "tenant not found")
+		return
+	}
+
 	subs, err := h.subscriptions.ListByUserTenant(r.Context(), uid, tenantID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list subscriptions failed")

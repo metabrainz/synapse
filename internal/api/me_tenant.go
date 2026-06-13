@@ -73,6 +73,11 @@ func (h *meHandler) listTenantChannels(w http.ResponseWriter, r *http.Request) {
 	}
 	tenantID := chi.URLParam(r, "tenant_id")
 
+	if !h.reg.HasTenant(tenantID) {
+		writeError(w, http.StatusNotFound, "tenant not found")
+		return
+	}
+
 	mappings, err := h.tenantMappings.ListByUser(r.Context(), uid, tenantID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list tenant channels failed")
@@ -92,6 +97,11 @@ func (h *meHandler) removeTenantChannel(w http.ResponseWriter, r *http.Request) 
 	}
 	tenantID := chi.URLParam(r, "tenant_id")
 	channelType := chi.URLParam(r, "channel_type")
+
+	if !h.reg.HasTenant(tenantID) {
+		writeError(w, http.StatusNotFound, "tenant not found")
+		return
+	}
 
 	if err := h.tenantMappings.Delete(r.Context(), uid, tenantID, channelType); err != nil {
 		writeError(w, http.StatusInternalServerError, "remove tenant channel failed")

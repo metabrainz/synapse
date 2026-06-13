@@ -38,6 +38,7 @@ type ingestResponse struct {
 func (h *ingestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	tenant := middleware.TenantFromContext(r.Context())
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 	var req ingestRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
