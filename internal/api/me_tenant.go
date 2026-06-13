@@ -1,111 +1,103 @@
 package api
 
 import (
-	"encoding/json"
-	"net/http"
+	"context"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/metabrainz/synapse/internal/api/middleware"
 	"github.com/metabrainz/synapse/internal/store/usertenant"
 )
 
 // PUT /v1/me/tenants/{tenant_id}/channels/{channel_type}
-func (h *meHandler) assignTenantChannel(w http.ResponseWriter, r *http.Request) {
-	uid, ok := requireUser(w, r)
-	if !ok {
-		return
-	}
-	tenantID := chi.URLParam(r, "tenant_id")
-	channelType := chi.URLParam(r, "channel_type")
 
-	var body struct {
-		ChannelID int64 `json:"channel_id"`
+type assignTenantChannelInput struct {
+	TenantID    string `path:"tenant_id" doc:"Tenant ID"`
+	ChannelType string `path:"channel_type" doc:"Channel type"`
+	Body        struct {
+		ChannelID int64 `json:"channel_id" doc:"ID of the user channel to assign" minimum:"1"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if body.ChannelID == 0 {
-		writeError(w, http.StatusBadRequest, "channel_id required")
-		return
-	}
+}
 
-	if !h.reg.HasTenant(tenantID) {
-		writeError(w, http.StatusNotFound, "tenant not found")
-		return
+func (h *meHandler) assignTenantChannel(ctx context.Context, input *assignTenantChannelInput) (*struct{}, error) {
+	uid := middleware.UserFromContext(ctx)
+	if uid == "" {
+		return nil, huma.Error401Unauthorized("unauthenticated")
 	}
-	if !h.reg.HasChannelType(tenantID, channelType) {
-		writeError(w, http.StatusBadRequest, "channel_type not supported for this tenant")
-		return
+	if !h.reg.HasTenant(input.TenantID) {
+		return nil, huma.Error404NotFound("tenant not found")
+	}
+	if !h.reg.HasChannelType(input.TenantID, input.ChannelType) {
+		return nil, huma.Error400BadRequest("channel_type not supported for this tenant")
 	}
 
-	ch, err := h.channels.GetByID(r.Context(), body.ChannelID)
+	ch, err := h.channels.GetByID(ctx, input.Body.ChannelID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "assign channel failed")
-		return
+		return nil, huma.Error500InternalServerError("assign channel failed")
 	}
-	if ch == nil || ch.UserID != uid || ch.ChannelType != channelType {
-		writeError(w, http.StatusNotFound, "channel not found")
-		return
+	if ch == nil || ch.UserID != uid || ch.ChannelType != input.ChannelType {
+		return nil, huma.Error404NotFound("channel not found")
 	}
 	if !ch.IsActive {
-		writeError(w, http.StatusBadRequest, "channel is not active")
-		return
+		return nil, huma.Error400BadRequest("channel is not active")
 	}
 
-	if err := h.tenantMappings.Upsert(r.Context(), usertenant.Mapping{
+	if err := h.tenantMappings.Upsert(ctx, usertenant.Mapping{
 		UserID:        uid,
-		TenantID:      tenantID,
-		ChannelType:   channelType,
-		UserChannelID: body.ChannelID,
+		TenantID:      input.TenantID,
+		ChannelType:   input.ChannelType,
+		UserChannelID: input.Body.ChannelID,
 		IsEnabled:     true,
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "assign channel failed")
-		return
+		return nil, huma.Error500InternalServerError("assign channel failed")
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return nil, nil
 }
 
 // GET /v1/me/tenants/{tenant_id}/channels
-func (h *meHandler) listTenantChannels(w http.ResponseWriter, r *http.Request) {
-	uid, ok := requireUser(w, r)
-	if !ok {
-		return
-	}
-	tenantID := chi.URLParam(r, "tenant_id")
 
-	if !h.reg.HasTenant(tenantID) {
-		writeError(w, http.StatusNotFound, "tenant not found")
-		return
-	}
+type listTenantChannelsInput struct {
+	TenantID string `path:"tenant_id" doc:"Tenant ID"`
+}
 
-	mappings, err := h.tenantMappings.ListByUser(r.Context(), uid, tenantID)
+type listTenantChannelsOutput struct {
+	Body []usertenant.Mapping
+}
+
+func (h *meHandler) listTenantChannels(ctx context.Context, input *listTenantChannelsInput) (*listTenantChannelsOutput, error) {
+	uid := middleware.UserFromContext(ctx)
+	if uid == "" {
+		return nil, huma.Error401Unauthorized("unauthenticated")
+	}
+	if !h.reg.HasTenant(input.TenantID) {
+		return nil, huma.Error404NotFound("tenant not found")
+	}
+	mappings, err := h.tenantMappings.ListByUser(ctx, uid, input.TenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "list tenant channels failed")
-		return
+		return nil, huma.Error500InternalServerError("list tenant channels failed")
 	}
 	if mappings == nil {
 		mappings = []usertenant.Mapping{}
 	}
-	writeJSON(w, http.StatusOK, mappings)
+	return &listTenantChannelsOutput{Body: mappings}, nil
 }
 
 // DELETE /v1/me/tenants/{tenant_id}/channels/{channel_type}
-func (h *meHandler) removeTenantChannel(w http.ResponseWriter, r *http.Request) {
-	uid, ok := requireUser(w, r)
-	if !ok {
-		return
-	}
-	tenantID := chi.URLParam(r, "tenant_id")
-	channelType := chi.URLParam(r, "channel_type")
 
-	if !h.reg.HasTenant(tenantID) {
-		writeError(w, http.StatusNotFound, "tenant not found")
-		return
-	}
+type removeTenantChannelInput struct {
+	TenantID    string `path:"tenant_id" doc:"Tenant ID"`
+	ChannelType string `path:"channel_type" doc:"Channel type to remove"`
+}
 
-	if err := h.tenantMappings.Delete(r.Context(), uid, tenantID, channelType); err != nil {
-		writeError(w, http.StatusInternalServerError, "remove tenant channel failed")
-		return
+func (h *meHandler) removeTenantChannel(ctx context.Context, input *removeTenantChannelInput) (*struct{}, error) {
+	uid := middleware.UserFromContext(ctx)
+	if uid == "" {
+		return nil, huma.Error401Unauthorized("unauthenticated")
 	}
-	w.WriteHeader(http.StatusNoContent)
+	if !h.reg.HasTenant(input.TenantID) {
+		return nil, huma.Error404NotFound("tenant not found")
+	}
+	if err := h.tenantMappings.Delete(ctx, uid, input.TenantID, input.ChannelType); err != nil {
+		return nil, huma.Error500InternalServerError("remove tenant channel failed")
+	}
+	return nil, nil
 }

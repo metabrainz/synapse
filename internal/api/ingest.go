@@ -1,11 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metabrainz/synapse/internal/api/middleware"
 	"github.com/metabrainz/synapse/internal/dedup"
@@ -23,78 +24,68 @@ type ingestHandler struct {
 	reg     *eventtype.Registry
 }
 
-type ingestRequest struct {
-	Recipients     []string        `json:"recipients"`
-	EventType      string          `json:"event_type"`
-	Payload        json.RawMessage `json:"payload"`
-	IdempotencyKey *string         `json:"idempotency_key"`
+type ingestRequestBody struct {
+	Recipients     []string        `json:"recipients" doc:"User IDs to deliver this event to" minItems:"1"`
+	EventType      string          `json:"event_type" doc:"Event type identifier registered for this tenant" minLength:"1"`
+	Payload        json.RawMessage `json:"payload,omitempty" doc:"Event-specific payload data"`
+	IdempotencyKey *string         `json:"idempotency_key,omitempty" doc:"Client-supplied deduplication key"`
 }
 
-type ingestResponse struct {
-	EventID       int64 `json:"event_id"`
-	DeliveryCount int   `json:"delivery_count"`
+type ingestInput struct {
+	DryRun bool              `query:"dry_run" doc:"Preview matching channels without writing anything"`
+	Body   ingestRequestBody `required:"true"`
 }
 
-func (h *ingestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	tenant := middleware.TenantFromContext(r.Context())
+type ingestResponseBody struct {
+	EventID       *int64 `json:"event_id,omitempty" doc:"ID of the created event"`
+	DeliveryCount *int   `json:"delivery_count,omitempty" doc:"Number of deliveries queued"`
+	DryRun        bool   `json:"dry_run,omitempty" doc:"True when this was a dry-run preview"`
+	Deduplicated  bool   `json:"deduplicated,omitempty" doc:"True when this request matched a prior idempotency key"`
+}
 
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
-	var req ingestRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
+type ingestOutput struct {
+	Status int // 202 Accepted normally; 200 for dry-run or deduplicated responses
+	Body   ingestResponseBody
+}
+
+func (h *ingestHandler) handle(ctx context.Context, input *ingestInput) (*ingestOutput, error) {
+	tenant := middleware.TenantFromContext(ctx)
+	if tenant == nil {
+		return nil, huma.Error401Unauthorized("unauthorized")
 	}
-	if req.EventType == "" {
-		writeError(w, http.StatusBadRequest, "event_type is required")
-		return
-	}
-	recipients := ingest.DedupeRecipients(req.Recipients)
+
+	recipients := ingest.DedupeRecipients(input.Body.Recipients)
 	if len(recipients) == 0 {
-		writeError(w, http.StatusBadRequest, "recipients must contain at least one user_id")
-		return
+		return nil, huma.Error400BadRequest("recipients must contain at least one user_id")
 	}
 	if len(recipients) > ingest.MaxRecipientsPerEvent {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("recipients exceeds max of %d", ingest.MaxRecipientsPerEvent))
-		return
+		return nil, huma.Error400BadRequest(fmt.Sprintf("recipients exceeds max of %d", ingest.MaxRecipientsPerEvent))
 	}
-	if req.Payload == nil {
-		req.Payload = json.RawMessage(`{}`)
-	}
-
-	// Reject unknown (tenant, event_type) pairs before touching the DB.
-	if !h.reg.Has(tenant.ID, req.EventType) {
-		writeError(w, http.StatusBadRequest, "event type not registered for this tenant")
-		return
+	if input.Body.Payload == nil {
+		input.Body.Payload = json.RawMessage(`{}`)
 	}
 
-	// Validate payload against the registered schema for this (tenant, event_type).
-	if err := h.reg.Validate(tenant.ID, req.EventType, req.Payload); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("payload validation failed: %s", err))
-		return
+	if !h.reg.Has(tenant.ID, input.Body.EventType) {
+		return nil, huma.Error400BadRequest("event type not registered for this tenant")
 	}
-
-	ctx := r.Context()
+	if err := h.reg.Validate(tenant.ID, input.Body.EventType, input.Body.Payload); err != nil {
+		return nil, huma.Error400BadRequest(fmt.Sprintf("payload validation failed: %s", err))
+	}
 
 	// Dry-run: preview matching channels without writing anything.
-	if r.URL.Query().Get("dry_run") == "true" {
-		channels, err := h.fan.Preview(ctx, tenant.ID, req.EventType, recipients)
+	if input.DryRun {
+		count, err := h.fan.Preview(ctx, tenant.ID, input.Body.EventType, recipients)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "fanout preview failed")
-			return
+			return nil, huma.Error500InternalServerError("fanout preview failed")
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"dry_run":        true,
-			"delivery_count": channels,
-		})
-		return
+		return &ingestOutput{Status: 200, Body: ingestResponseBody{DryRun: true, DeliveryCount: &count}}, nil
 	}
 
 	// Step 1: Redis idempotency pre-check (fail-open — deduper returns false on Redis error).
-	if req.IdempotencyKey != nil {
-		seen, _ := h.deduper.SeenIdempotency(ctx, tenant.ID, *req.IdempotencyKey)
+	if input.Body.IdempotencyKey != nil {
+		seen, _ := h.deduper.SeenIdempotency(ctx, tenant.ID, *input.Body.IdempotencyKey)
 		if seen {
-			h.writeDeduplicated(w, r, tenant.ID, *req.IdempotencyKey)
-			return
+			return h.deduplicated(ctx, tenant.ID, *input.Body.IdempotencyKey)
 		}
 	}
 
@@ -104,18 +95,16 @@ func (h *ingestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	err := store.WithTx(ctx, h.pool, func(q store.Querier) error {
 		ev := events.Event{
 			TenantID:       tenant.ID,
-			EventType:      req.EventType,
+			EventType:      input.Body.EventType,
 			Recipients:     recipients,
-			Payload:        req.Payload,
-			IdempotencyKey: req.IdempotencyKey,
+			Payload:        input.Body.Payload,
+			IdempotencyKey: input.Body.IdempotencyKey,
 		}
-
 		ev, err := events.Insert(ctx, q, ev)
 		if err != nil {
 			return err
 		}
 		eventID = ev.ID
-
 		count, err := h.fan.Fan(ctx, q, ev)
 		if err != nil {
 			return err
@@ -125,34 +114,28 @@ func (h *ingestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		// PG unique constraint on idempotency_key — treat as deduplicated.
-		if store.IsUniqueViolation(err) && req.IdempotencyKey != nil {
-			h.writeDeduplicated(w, r, tenant.ID, *req.IdempotencyKey)
-			return
+		if store.IsUniqueViolation(err) && input.Body.IdempotencyKey != nil {
+			return h.deduplicated(ctx, tenant.ID, *input.Body.IdempotencyKey)
 		}
-		// Suppress noise from clients that cancelled mid-request
 		if ctx.Err() == nil {
 			slog.ErrorContext(ctx, "event ingestion failed", "tenant", tenant.ID, "err", err)
 		}
-		writeError(w, http.StatusInternalServerError, "event ingestion failed")
-		return
+		return nil, huma.Error500InternalServerError("event ingestion failed")
 	}
 
 	// Step 3: Mark idempotency key in Redis AFTER commit (set before commit risks
 	// losing the event if we crash between SET and INSERT).
-	if req.IdempotencyKey != nil {
-		h.deduper.MarkIdempotency(ctx, tenant.ID, *req.IdempotencyKey)
+	if input.Body.IdempotencyKey != nil {
+		h.deduper.MarkIdempotency(ctx, tenant.ID, *input.Body.IdempotencyKey)
 	}
 
-	writeJSON(w, http.StatusAccepted, ingestResponse{
-		EventID:       eventID,
-		DeliveryCount: deliveryCount,
-	})
+	return &ingestOutput{Status: 202, Body: ingestResponseBody{EventID: &eventID, DeliveryCount: &deliveryCount}}, nil
 }
 
-func (h *ingestHandler) writeDeduplicated(w http.ResponseWriter, r *http.Request, tenantID, idempotencyKey string) {
-	resp := map[string]any{"deduplicated": true}
-	if id, err := events.GetIDByIdempotencyKey(r.Context(), h.pool, tenantID, idempotencyKey); err == nil && id > 0 {
-		resp["event_id"] = id
+func (h *ingestHandler) deduplicated(ctx context.Context, tenantID, idempotencyKey string) (*ingestOutput, error) {
+	body := ingestResponseBody{Deduplicated: true}
+	if id, err := events.GetIDByIdempotencyKey(ctx, h.pool, tenantID, idempotencyKey); err == nil && id > 0 {
+		body.EventID = &id
 	}
-	writeJSON(w, http.StatusOK, resp)
+	return &ingestOutput{Status: 200, Body: body}, nil
 }

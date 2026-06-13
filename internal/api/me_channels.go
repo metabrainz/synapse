@@ -1,105 +1,104 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"strconv"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/metabrainz/synapse/internal/adapter"
+	"github.com/metabrainz/synapse/internal/api/middleware"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
 )
 
 // GET /v1/me/channels
-func (h *meHandler) listChannels(w http.ResponseWriter, r *http.Request) {
-	uid, ok := requireUser(w, r)
-	if !ok {
-		return
-	}
 
-	chans, err := h.channels.ListByUser(r.Context(), uid)
+type listChannelsOutput struct {
+	Body []userchannels.UserChannel
+}
+
+func (h *meHandler) listChannels(ctx context.Context, _ *struct{}) (*listChannelsOutput, error) {
+	uid := middleware.UserFromContext(ctx)
+	if uid == "" {
+		return nil, huma.Error401Unauthorized("unauthenticated")
+	}
+	chans, err := h.channels.ListByUser(ctx, uid)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "list channels failed")
-		return
+		return nil, huma.Error500InternalServerError("list channels failed")
 	}
 	if chans == nil {
 		chans = []userchannels.UserChannel{}
 	}
-	writeJSON(w, http.StatusOK, chans)
+	return &listChannelsOutput{Body: chans}, nil
 }
 
 // POST /v1/me/channels
-func (h *meHandler) createChannel(w http.ResponseWriter, r *http.Request) {
-	uid, ok := requireUser(w, r)
-	if !ok {
-		return
-	}
 
-	var body struct {
-		ChannelType string          `json:"channel_type"`
-		Label       string          `json:"label"`
-		Config      json.RawMessage `json:"config"`
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 128*1024) // 128 KB — channel configs are small
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if body.ChannelType == "" {
-		writeError(w, http.StatusBadRequest, "channel_type required")
-		return
-	}
+type createChannelBody struct {
+	ChannelType string          `json:"channel_type" doc:"Type of notification channel (e.g. webhook, telegram)" minLength:"1"`
+	Label       string          `json:"label,omitempty" doc:"Human-readable label for this channel"`
+	Config      json.RawMessage `json:"config,omitempty" doc:"Channel-type-specific configuration"`
+}
 
-	// Check if the channel type is supported.
-	adp, ok := adapter.Registry[adapter.ChannelType(body.ChannelType)]
-	if !ok {
-		writeError(w, http.StatusBadRequest, "unsupported channel_type")
-		return
+type createChannelInput struct {
+	Body createChannelBody
+}
+
+type createChannelOutput struct {
+	Body struct {
+		ID int64 `json:"id" doc:"ID of the created channel"`
 	}
-	if len(body.Config) == 0 {
-		body.Config = json.RawMessage(`{}`)
+}
+
+func (h *meHandler) createChannel(ctx context.Context, input *createChannelInput) (*createChannelOutput, error) {
+	uid := middleware.UserFromContext(ctx)
+	if uid == "" {
+		return nil, huma.Error401Unauthorized("unauthenticated")
+	}
+	adp, ok := adapter.Registry[adapter.ChannelType(input.Body.ChannelType)]
+	if !ok {
+		return nil, huma.Error400BadRequest("unsupported channel_type")
+	}
+	cfg := input.Body.Config
+	if len(cfg) == 0 {
+		cfg = json.RawMessage(`{}`)
 	}
 	if v, ok := adp.(adapter.ConfigValidator); ok {
-		if err := v.ValidateConfig(body.Config); err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid config: %s", err))
-			return
+		if err := v.ValidateConfig(cfg); err != nil {
+			return nil, huma.Error400BadRequest(fmt.Sprintf("invalid config: %s", err))
 		}
 	}
-
-	id, err := h.channels.Insert(r.Context(), userchannels.UserChannel{
+	id, err := h.channels.Insert(ctx, userchannels.UserChannel{
 		UserID:      uid,
-		ChannelType: body.ChannelType,
-		Label:       body.Label,
-		Config:      body.Config,
+		ChannelType: input.Body.ChannelType,
+		Label:       input.Body.Label,
+		Config:      cfg,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "create channel failed")
-		return
+		return nil, huma.Error500InternalServerError("create channel failed")
 	}
-	writeJSON(w, http.StatusCreated, map[string]int64{"id": id})
+	out := &createChannelOutput{}
+	out.Body.ID = id
+	return out, nil
 }
 
 // DELETE /v1/me/channels/{id}
-func (h *meHandler) deleteChannel(w http.ResponseWriter, r *http.Request) {
-	uid, ok := requireUser(w, r)
-	if !ok {
-		return
-	}
 
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid channel id")
-		return
+type deleteChannelInput struct {
+	ID int64 `path:"id" doc:"Channel ID to delete"`
+}
+
+func (h *meHandler) deleteChannel(ctx context.Context, input *deleteChannelInput) (*struct{}, error) {
+	uid := middleware.UserFromContext(ctx)
+	if uid == "" {
+		return nil, huma.Error401Unauthorized("unauthenticated")
 	}
-	if err := h.channels.Delete(r.Context(), uid, id); err != nil {
+	if err := h.channels.Delete(ctx, uid, input.ID); err != nil {
 		if errors.Is(err, userchannels.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "channel not found")
-			return
+			return nil, huma.Error404NotFound("channel not found")
 		}
-		writeError(w, http.StatusInternalServerError, "delete channel failed")
-		return
+		return nil, huma.Error500InternalServerError("delete channel failed")
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return nil, nil
 }
