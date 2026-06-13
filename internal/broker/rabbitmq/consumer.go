@@ -10,10 +10,14 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// Handler processes one message. Return nil to ack, non-nil to reject (→ DLQ).
-// If the error is retryable, the handler is responsible for publishing to the
-// retry exchange (via Publisher.PublishRetry) before returning nil so the
-// original message is acked.
+// Handler processes one message. Three outcomes:
+//
+//   - Success:          return nil          → Ack; message is done.
+//   - Retriable failure: PublishRetry, then return nil → Ack original; retry copy sits in TTL queue.
+//   - Exhausted / fatal: return error       → Reject(requeue=false) → DLX → DLQ.
+//
+// The handler owns the retry-publish step. Returning nil without publishing
+// on a failure means the message is silently dropped.
 type Handler func(ctx context.Context, body []byte) error
 
 // Consumer holds one AMQP connection dedicated to consuming from one channel-type queue.
@@ -76,14 +80,14 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 				defer func() {
 					if r := recover(); r != nil {
 						slog.Error("worker: handler panic", "queue", queue, "panic", r)
-						msg.Reject(false)
+						msg.Reject(false) // requeue=false: don't loop on a broken message, send to DLQ
 					}
 				}()
 				if err := handler(ctx, msg.Body); err != nil {
 					slog.Error("worker: handler failed, rejecting to DLQ", "queue", queue, "err", err)
-					msg.Reject(false)
+					msg.Reject(false) // requeue=false: DLX routes this to the dead queue, not back here
 				} else {
-					msg.Ack(false)
+					msg.Ack(false) // ack only this message
 				}
 			}()
 		}
