@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -42,6 +43,27 @@ func New() *Adapter {
 }
 
 func (a *Adapter) MaxAttempts() int { return 5 }
+
+// ValidateConfig checks that the webhook config has a non-empty, well-formed URL.
+// HTTPS enforcement and private-range blocking are handled separately at the
+// network/SSRF policy layer.
+func (a *Adapter) ValidateConfig(config json.RawMessage) error {
+	var cfg channelConfig
+	if err := json.Unmarshal(config, &cfg); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
+	if cfg.URL == "" {
+		return fmt.Errorf("url is required")
+	}
+	u, err := url.Parse(cfg.URL)
+	if err != nil {
+		return fmt.Errorf("invalid url: %w", err)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("url must have a host")
+	}
+	return nil
+}
 
 // Deliver POSTs the event payload to the webhook URL in the channel config.
 // X-Synapse-* headers let the receiver validate delivery metadata without

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -51,12 +52,19 @@ func (h *meHandler) createChannel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if the channel type is supported.
-	if _, ok := adapter.Registry[adapter.ChannelType(body.ChannelType)]; !ok {
+	adp, ok := adapter.Registry[adapter.ChannelType(body.ChannelType)]
+	if !ok {
 		writeError(w, http.StatusBadRequest, "unsupported channel_type")
 		return
 	}
 	if len(body.Config) == 0 {
 		body.Config = json.RawMessage(`{}`)
+	}
+	if v, ok := adp.(adapter.ConfigValidator); ok {
+		if err := v.ValidateConfig(body.Config); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid config: %s", err))
+			return
+		}
 	}
 
 	id, err := h.channels.Insert(r.Context(), userchannels.UserChannel{

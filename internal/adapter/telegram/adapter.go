@@ -45,6 +45,18 @@ func New(botToken, webhookURL, webhookSecret string, rdb *redis.Client, reg *eve
 	return a
 }
 
+// ValidateConfig checks that the Telegram config has a non-empty chat_id.
+func (a *Adapter) ValidateConfig(config json.RawMessage) error {
+	var cfg channelConfig
+	if err := json.Unmarshal(config, &cfg); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
+	if cfg.ChatID == "" {
+		return fmt.Errorf("chat_id is required")
+	}
+	return nil
+}
+
 // Start registers the Telegram webhook if WebhookURL is configured.
 // Called once at startup by adapter.Build for every adapter implementing Starter.
 func (a *Adapter) Start(ctx context.Context) error {

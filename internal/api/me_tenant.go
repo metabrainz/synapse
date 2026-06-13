@@ -47,6 +47,10 @@ func (h *meHandler) assignTenantChannel(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "channel not found")
 		return
 	}
+	if !ch.IsActive {
+		writeError(w, http.StatusBadRequest, "channel is not active")
+		return
+	}
 
 	if err := h.tenantMappings.Upsert(r.Context(), usertenant.Mapping{
 		UserID:        uid,

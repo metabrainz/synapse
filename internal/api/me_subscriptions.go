@@ -104,6 +104,15 @@ func (h *meHandler) unsubscribe(w http.ResponseWriter, r *http.Request) {
 	eventType := chi.URLParam(r, "event_type")
 	channelType := chi.URLParam(r, "channel_type")
 
+	if !h.reg.HasTenant(tenantID) {
+		writeError(w, http.StatusNotFound, "tenant not found")
+		return
+	}
+	if !h.reg.IsAllowed(tenantID, eventType, channelType) {
+		writeError(w, http.StatusBadRequest, "event_type or channel_type not permitted for this tenant")
+		return
+	}
+
 	if err := h.subscriptions.Delete(r.Context(), uid, tenantID, eventType, channelType); err != nil {
 		writeError(w, http.StatusInternalServerError, "unsubscribe failed")
 		return

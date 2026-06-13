@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -31,6 +32,13 @@ type Starter interface {
 // that satisfies this interface.
 type RouteProvider interface {
 	MountRoutes(r chi.Router, userMW func(http.Handler) http.Handler, rdb *redis.Client, channels *userchannels.Repo)
+}
+
+// ConfigValidator is implemented by adapters that can validate a proposed channel
+// config before it is stored. createChannel calls this when present — invalid
+// configs are rejected at write time rather than failing silently at delivery time.
+type ConfigValidator interface {
+	ValidateConfig(config json.RawMessage) error
 }
 
 // RateLimiter is implemented by adapters that enforce destination-level rate limits
