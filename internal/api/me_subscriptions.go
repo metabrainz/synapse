@@ -1,75 +1,79 @@
 package api
 
 import (
-	"net/http"
+	"context"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/metabrainz/synapse/internal/api/middleware"
 	"github.com/metabrainz/synapse/internal/store/usereventsubs"
 	"github.com/metabrainz/synapse/internal/store/usertenant"
 )
 
 // GET /v1/me/tenants/{tenant_id}/subscriptions
-func (h *meHandler) listSubscriptions(w http.ResponseWriter, r *http.Request) {
-	uid, ok := requireUser(w, r)
-	if !ok {
-		return
-	}
-	tenantID := chi.URLParam(r, "tenant_id")
 
-	if !h.reg.HasTenant(tenantID) {
-		writeError(w, http.StatusNotFound, "tenant not found")
-		return
-	}
+type listSubscriptionsInput struct {
+	TenantID string `path:"tenant_id" doc:"Tenant ID"`
+}
 
-	subs, err := h.subscriptions.ListByUserTenant(r.Context(), uid, tenantID)
+type listSubscriptionsOutput struct {
+	Body []usereventsubs.Subscription
+}
+
+func (h *meHandler) listSubscriptions(ctx context.Context, input *listSubscriptionsInput) (*listSubscriptionsOutput, error) {
+	uid := middleware.UserFromContext(ctx)
+	if uid == "" {
+		return nil, huma.Error401Unauthorized("unauthenticated")
+	}
+	if !h.reg.HasTenant(input.TenantID) {
+		return nil, huma.Error404NotFound("tenant not found")
+	}
+	subs, err := h.subscriptions.ListByUserTenant(ctx, uid, input.TenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "list subscriptions failed")
-		return
+		return nil, huma.Error500InternalServerError("list subscriptions failed")
 	}
 	if subs == nil {
 		subs = []usereventsubs.Subscription{}
 	}
-	writeJSON(w, http.StatusOK, subs)
+	return &listSubscriptionsOutput{Body: subs}, nil
 }
 
 // PUT /v1/me/tenants/{tenant_id}/subscriptions/{event_type}/{channel_type}
-func (h *meHandler) subscribe(w http.ResponseWriter, r *http.Request) {
-	uid, ok := requireUser(w, r)
-	if !ok {
-		return
-	}
-	tenantID := chi.URLParam(r, "tenant_id")
-	eventType := chi.URLParam(r, "event_type")
-	channelType := chi.URLParam(r, "channel_type")
 
-	if !h.reg.HasTenant(tenantID) {
-		writeError(w, http.StatusNotFound, "tenant not found")
-		return
+type subscribeInput struct {
+	TenantID    string `path:"tenant_id" doc:"Tenant ID"`
+	EventType   string `path:"event_type" doc:"Event type to subscribe to"`
+	ChannelType string `path:"channel_type" doc:"Channel type to deliver via"`
+}
+
+func (h *meHandler) subscribe(ctx context.Context, input *subscribeInput) (*struct{}, error) {
+	uid := middleware.UserFromContext(ctx)
+	if uid == "" {
+		return nil, huma.Error401Unauthorized("unauthenticated")
 	}
-	if !h.reg.IsAllowed(tenantID, eventType, channelType) {
-		writeError(w, http.StatusBadRequest, "event_type or channel_type not permitted for this tenant")
-		return
+	if !h.reg.HasTenant(input.TenantID) {
+		return nil, huma.Error404NotFound("tenant not found")
+	}
+	if !h.reg.IsAllowed(input.TenantID, input.EventType, input.ChannelType) {
+		return nil, huma.Error400BadRequest("event_type or channel_type not permitted for this tenant")
 	}
 
-	if err := h.subscriptions.Upsert(r.Context(), usereventsubs.Subscription{
+	if err := h.subscriptions.Upsert(ctx, usereventsubs.Subscription{
 		UserID:      uid,
-		TenantID:    tenantID,
-		EventType:   eventType,
-		ChannelType: channelType,
+		TenantID:    input.TenantID,
+		EventType:   input.EventType,
+		ChannelType: input.ChannelType,
 		IsEnabled:   true,
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "subscribe failed")
-		return
+		return nil, huma.Error500InternalServerError("subscribe failed")
 	}
 
 	// Auto-assign: if the user has no mapping for this channel type yet and
 	// owns exactly one active channel of that type, wire it up automatically.
-	ctx := r.Context()
-	mappings, err := h.tenantMappings.ListByUser(ctx, uid, tenantID)
+	mappings, err := h.tenantMappings.ListByUser(ctx, uid, input.TenantID)
 	if err == nil {
 		alreadyMapped := false
 		for _, m := range mappings {
-			if m.ChannelType == channelType {
+			if m.ChannelType == input.ChannelType {
 				alreadyMapped = true
 				break
 			}
@@ -79,15 +83,15 @@ func (h *meHandler) subscribe(w http.ResponseWriter, r *http.Request) {
 			if err == nil {
 				var candidates []int64
 				for _, ch := range channels {
-					if ch.ChannelType == channelType && ch.IsActive {
+					if ch.ChannelType == input.ChannelType && ch.IsActive {
 						candidates = append(candidates, ch.ID)
 					}
 				}
 				if len(candidates) == 1 {
 					_ = h.tenantMappings.Upsert(ctx, usertenant.Mapping{
 						UserID:        uid,
-						TenantID:      tenantID,
-						ChannelType:   channelType,
+						TenantID:      input.TenantID,
+						ChannelType:   input.ChannelType,
 						UserChannelID: candidates[0],
 						IsEnabled:     true,
 					})
@@ -96,31 +100,30 @@ func (h *meHandler) subscribe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	return nil, nil
 }
 
 // DELETE /v1/me/tenants/{tenant_id}/subscriptions/{event_type}/{channel_type}
-func (h *meHandler) unsubscribe(w http.ResponseWriter, r *http.Request) {
-	uid, ok := requireUser(w, r)
-	if !ok {
-		return
-	}
-	tenantID := chi.URLParam(r, "tenant_id")
-	eventType := chi.URLParam(r, "event_type")
-	channelType := chi.URLParam(r, "channel_type")
 
-	if !h.reg.HasTenant(tenantID) {
-		writeError(w, http.StatusNotFound, "tenant not found")
-		return
-	}
-	if !h.reg.IsAllowed(tenantID, eventType, channelType) {
-		writeError(w, http.StatusBadRequest, "event_type or channel_type not permitted for this tenant")
-		return
-	}
+type unsubscribeInput struct {
+	TenantID    string `path:"tenant_id" doc:"Tenant ID"`
+	EventType   string `path:"event_type" doc:"Event type to unsubscribe from"`
+	ChannelType string `path:"channel_type" doc:"Channel type"`
+}
 
-	if err := h.subscriptions.Delete(r.Context(), uid, tenantID, eventType, channelType); err != nil {
-		writeError(w, http.StatusInternalServerError, "unsubscribe failed")
-		return
+func (h *meHandler) unsubscribe(ctx context.Context, input *unsubscribeInput) (*struct{}, error) {
+	uid := middleware.UserFromContext(ctx)
+	if uid == "" {
+		return nil, huma.Error401Unauthorized("unauthenticated")
 	}
-	w.WriteHeader(http.StatusNoContent)
+	if !h.reg.HasTenant(input.TenantID) {
+		return nil, huma.Error404NotFound("tenant not found")
+	}
+	if !h.reg.IsAllowed(input.TenantID, input.EventType, input.ChannelType) {
+		return nil, huma.Error400BadRequest("event_type or channel_type not permitted for this tenant")
+	}
+	if err := h.subscriptions.Delete(ctx, uid, input.TenantID, input.EventType, input.ChannelType); err != nil {
+		return nil, huma.Error500InternalServerError("unsubscribe failed")
+	}
+	return nil, nil
 }

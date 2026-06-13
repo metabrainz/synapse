@@ -55,13 +55,13 @@ func TestMeChannels(t *testing.T) {
 		}
 	})
 
-	t.Run("create missing channel_type — 400", func(t *testing.T) {
+	t.Run("create missing channel_type — 422", func(t *testing.T) {
 		resp := e.userDo("POST", "/v1/me/channels", map[string]any{
 			"label": "no type",
 		}, token)
 		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("want 400, got %d", resp.StatusCode)
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Fatalf("want 422, got %d", resp.StatusCode)
 		}
 	})
 

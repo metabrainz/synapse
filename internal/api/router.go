@@ -3,8 +3,11 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
@@ -42,6 +45,8 @@ type Config struct {
 //	Surface A — tenant API key (static registry): POST /v1/events, GET /v1/events/{id}/deliveries
 //	Surface B — MetaBrainz OAuth token:           /v1/me/**
 //	Internal   — per-adapter secret headers:       /internal/**  (e.g. Telegram webhook)
+//
+// OpenAPI spec is served at /openapi.json; Swagger UI at /docs.
 func NewRouter(
 	cfg Config,
 	pool *pgxpool.Pool,
@@ -58,6 +63,69 @@ func NewRouter(
 	r.Use(sentryhttp.New(sentryhttp.Options{Repanic: true}).Handle)
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.RealIP)
+
+	// Global body size limit — huma reads the body centrally, so the limit must be
+	// applied before huma sees the request.
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Body != nil {
+				r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+
+	authMW := middleware.NewAuth(reg)
+
+	var userMW func(http.Handler) http.Handler
+	if cfg.Introspector != nil {
+		userMW = middleware.NewUserAuth(cfg.Introspector, usersRepo)
+	} else {
+		userMW = func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				writeError(w, http.StatusServiceUnavailable, "oauth not configured")
+			})
+		}
+	}
+
+	// Path-dispatching middleware: applies Surface A or B auth + rate limiting based on
+	// URL prefix. /v1/me/** → Surface B (OAuth); /v1/** → Surface A (tenant API key);
+	// everything else (health check, internal adapter routes) passes through unauthenticated.
+	//
+	// Auth runs before rate limiting so the rate-limit key function can read the
+	// tenant/user ID set in context by auth.
+	r.Use(func(next http.Handler) http.Handler {
+		surfaceAInner := next
+		if cfg.Limiter != nil {
+			surfaceAInner = cfg.Limiter.Middleware(func(r *http.Request) string {
+				if t := middleware.TenantFromContext(r.Context()); t != nil {
+					return t.ID
+				}
+				return ""
+			})(next)
+		}
+		surfaceA := authMW(surfaceAInner)
+
+		surfaceBInner := next
+		if cfg.Limiter != nil {
+			surfaceBInner = cfg.Limiter.Middleware(func(r *http.Request) string {
+				return middleware.UserFromContext(r.Context())
+			})(next)
+		}
+		surfaceB := userMW(surfaceBInner)
+
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p := r.URL.Path
+			switch {
+			case strings.HasPrefix(p, "/v1/me"):
+				surfaceB.ServeHTTP(w, r)
+			case strings.HasPrefix(p, "/v1/"):
+				surfaceA.ServeHTTP(w, r)
+			default:
+				next.ServeHTTP(w, r)
+			}
+		})
+	})
 
 	// GET /health/ready — liveness probe; checks Postgres, Redis, and AMQP.
 	// Uses a 3 s deadline so a hung dependency doesn't stall the load balancer.
@@ -84,69 +152,31 @@ func NewRouter(
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	// Surface A — tenant API key auth.
-	// Rate-limited per tenant ID.
-	authMW := middleware.NewAuth(reg)
-	r.With(authMW).Route("/v1", func(r chi.Router) {
-		if cfg.Limiter != nil {
-			r.Use(cfg.Limiter.Middleware(func(r *http.Request) string {
-				if tenant := middleware.TenantFromContext(r.Context()); tenant != nil {
-					return tenant.ID
-				}
-				return ""
-			}))
-		}
-		ing := &ingestHandler{pool: pool, fan: fan, deduper: deduper, reg: reg}
-		// POST /v1/events — ingest an event and fan it out to matching subscriber channels.
-		r.Post("/events", ing.ServeHTTP)
-		// GET /v1/events/{event_id}/deliveries — list delivery records for an event (tenant-scoped).
-		r.Get("/events/{event_id}/deliveries", (&deliveriesHandler{pool: pool}).listByEvent)
-	})
+	// Huma API — generates OpenAPI spec from handler types.
+	// Spec: GET /openapi.json   Swagger UI: GET /docs
+	api := humachi.New(r, huma.DefaultConfig("Synapse API", "1.0.0"))
 
-	// Surface B — MetaBrainz OAuth token auth.
-	// Rate-limited per user ID. When OAuth is not configured, all /v1/me requests return 503.
-	var userMW func(http.Handler) http.Handler
-	if cfg.Introspector != nil {
-		userMW = middleware.NewUserAuth(cfg.Introspector, usersRepo)
-	} else {
-		userMW = func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				writeError(w, http.StatusServiceUnavailable, "oauth not configured")
-			})
-		}
+	// Security schemes — wired to the Swagger UI "Authorize" button.
+	spec := api.OpenAPI()
+	if spec.Components == nil {
+		spec.Components = &huma.Components{}
 	}
-	me := &meHandler{
-		channels:       userChannels,
-		tenantMappings: tenantMappings,
-		subscriptions:  subscriptions,
-		reg:            reg,
+	spec.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
+		"TenantAPIKey": {
+			Type:         "http",
+			Scheme:       "bearer",
+			BearerFormat: "API Key",
+			Description:  "Tenant API key — Surface A routes (/v1/events/**)",
+		},
+		"UserOAuth": {
+			Type:         "http",
+			Scheme:       "bearer",
+			BearerFormat: "OAuth token",
+			Description:  "MetaBrainz OAuth Bearer token — Surface B routes (/v1/me/**)",
+		},
 	}
 
-	r.With(userMW).Route("/v1/me", func(r chi.Router) {
-		if cfg.Limiter != nil {
-			r.Use(cfg.Limiter.Middleware(func(r *http.Request) string {
-				return middleware.UserFromContext(r.Context())
-			}))
-		}
-
-		// Channel management — CRUD for the user's notification channels.
-		r.Get("/channels", me.listChannels)
-		r.Post("/channels", me.createChannel)
-		r.Delete("/channels/{id}", me.deleteChannel)
-
-		// Catalog — read-only view of what a tenant exposes.
-		r.Get("/tenants/{tenant_id}/event-types", me.listTenantEventTypes)
-
-		// Tenant channel mappings — which channel receives deliveries for a given tenant.
-		r.Get("/tenants/{tenant_id}/channels", me.listTenantChannels)
-		r.Put("/tenants/{tenant_id}/channels/{channel_type}", me.assignTenantChannel)
-		r.Delete("/tenants/{tenant_id}/channels/{channel_type}", me.removeTenantChannel)
-
-		// Subscriptions — opt in/out of specific event types per tenant and channel.
-		r.Get("/tenants/{tenant_id}/subscriptions", me.listSubscriptions)
-		r.Put("/tenants/{tenant_id}/subscriptions/{event_type}/{channel_type}", me.subscribe)
-		r.Delete("/tenants/{tenant_id}/subscriptions/{event_type}/{channel_type}", me.unsubscribe)
-	})
+	registerRoutes(api, pool, fan, deduper, reg, userChannels, tenantMappings, subscriptions)
 
 	// Internal routes — each adapter mounts its own under /internal/** or /v1/me/**.
 	// Auth is adapter-specific (e.g. Telegram validates X-Telegram-Bot-Api-Secret-Token).

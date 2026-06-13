@@ -49,8 +49,8 @@ func TestIngestMissingFields(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			resp := e.tenantDo("POST", "/v1/events", tc.body, e.apiKey)
 			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusBadRequest {
-				t.Fatalf("%s: want 400, got %d", tc.name, resp.StatusCode)
+			if resp.StatusCode != http.StatusUnprocessableEntity {
+				t.Fatalf("%s: want 422, got %d", tc.name, resp.StatusCode)
 			}
 		})
 	}
