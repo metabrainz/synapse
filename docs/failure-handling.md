@@ -11,8 +11,8 @@ How Synapse behaves when its dependencies degrade or go down.
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **api**     | Requests that need the DB return 503. Health check (`/health/ready`) starts failing immediately.                                                                                                                          |
 | **ingest**  | `InsertBatch` fails → entire AMQP batch is nacked with requeue. RabbitMQ holds the messages durably. No events are lost — they wait in the queue until Postgres recovers.                                                 |
-| **relay**   | `ClaimBatch` fails → tick returns an error and is logged. Outbox rows stay `PENDING`. Relay polls again after `outbox_poll_ms` and resumes normally once Postgres is back.                                                |
-| **worker**  | Delivery still proceeds (adapter call is independent of Postgres). Writing the delivery status update fails and is logged, but the message is acked. Status rows may be transiently stale; the cleanup job corrects them. |
+| **relay**   | `ClaimBatch` fails → tick returns an error and is logged. Outbox rows stay `PENDING`. On publish failure mid-batch, claimed rows remain `PUBLISHING` until relay startup `ResetStuck` (5 min) or the cleanup job resets them. |
+| **worker**  | Delivery still proceeds (adapter call is independent of Postgres). Writing the delivery status update fails and is logged, but the message is acked. Status rows may remain stale until a successful redelivery or manual reconciliation — cleanup marks stuck `PENDING`/`RETRYING` rows `DEAD`, it does not backfill `DELIVERED`. |
 | **cleanup** | Fails with an error log. Stale data accumulates until the next successful run. No data is lost.                                                                                                                           |
 
 
@@ -27,7 +27,7 @@ How Synapse behaves when its dependencies degrade or go down.
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **api**    | Direct ingest (`POST /v1/events`) still writes to Postgres atomically. The outbox row sits there until the relay reconnects and publishes it. No events lost.                        |
 | **ingest** | Consumer connection drops → `ConsumeBatchQueue` returns an error → `errgroup` cancels all workers → service exits. Systemd / Docker restarts it. Messages stay in the durable queue. |
-| **relay**  | `PublishBatch` fails → relay reconnects and returns an error. Outbox rows stay `PENDING` (only confirmed rows are deleted). Relay resumes on the next poll after reconnect.          |
+| **relay**  | `PublishBatch` fails → relay reconnects and returns an error. Claimed rows stay `PUBLISHING` until `ResetStuck` resets them to `PENDING` (relay startup + cleanup). Only broker-confirmed rows are deleted. |
 | **worker** | Consumer connection drops → service exits (same as ingest). Messages stay in the durable queue. No messages are lost because RabbitMQ queues are declared durable.                   |
 
 
@@ -45,7 +45,7 @@ Redis is used for three things. All three fail open.
 | Feature                   | Behaviour when Redis is down                                                                                                                                                                                               |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Rate limiting**         | `Allow()` returns an error → middleware lets the request through. Traffic is unthrottled until Redis recovers.                                                                                                             |
-| **Delivery dedup**        | `Seen()` returns an error → dedup is skipped → delivery proceeds. If RabbitMQ redelivers the same message, Postgres write is the backstop (delivery status is already `DELIVERED`; the duplicate write is a no-op update). |
+| **Delivery dedup**        | `Seen()` fails open → dedup is skipped → delivery proceeds. `Seen()` uses `SETNX` — the key is set at the start of processing, not after. On a Nack path, `DeleteSeen()` clears it so redelivery is not suppressed. With Redis down, both calls fail open, so the same `(deliveryID, attempt)` pair may be processed more than once — the PG unique constraint is the hard backstop against duplicate DB writes. |
 | **Idempotency key check** | Pre-check skipped → request proceeds. If the key was already processed, the Postgres unique constraint on `(tenant_id, idempotency_key)` catches the duplicate and returns a deduplicated response.                        |
 | **OAuth token cache**     | Cache miss on every request → every Surface B call hits the MB introspection endpoint directly. MB becomes the bottleneck. Fails open: requests still succeed as long as MB is reachable.                                  |
 
