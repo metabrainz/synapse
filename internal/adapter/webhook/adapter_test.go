@@ -86,7 +86,7 @@ func TestSSRFBlocklist(t *testing.T) {
 		"http://172.16.0.1/hook",
 		"http://172.31.255.255/hook",
 		"http://192.168.1.1/hook",
-		"http://169.254.169.254/hook",     // AWS/GCP metadata
+		"http://169.254.169.254/hook", // AWS/GCP metadata
 		"http://169.254.169.254/latest/meta-data/iam/security-credentials/",
 	}
 

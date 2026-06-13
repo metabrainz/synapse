@@ -37,15 +37,15 @@ type Adapter struct {
 // Evaluated after DNS resolution so DNS rebinding attacks are also caught.
 var blockedCIDRs = func() []*net.IPNet {
 	cidrs := []string{
-		"127.0.0.0/8",   // loopback
-		"::1/128",       // IPv6 loopback
-		"10.0.0.0/8",    // RFC1918
-		"172.16.0.0/12", // RFC1918
+		"127.0.0.0/8",    // loopback
+		"::1/128",        // IPv6 loopback
+		"10.0.0.0/8",     // RFC1918
+		"172.16.0.0/12",  // RFC1918
 		"192.168.0.0/16", // RFC1918
 		"169.254.0.0/16", // link-local — AWS/GCP metadata endpoint lives here
-		"fe80::/10",     // IPv6 link-local
-		"fc00::/7",      // IPv6 unique-local
-		"0.0.0.0/8",     // unspecified
+		"fe80::/10",      // IPv6 link-local
+		"fc00::/7",       // IPv6 unique-local
+		"0.0.0.0/8",      // unspecified
 	}
 	nets := make([]*net.IPNet, 0, len(cidrs))
 	for _, c := range cidrs {

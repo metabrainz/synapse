@@ -17,7 +17,7 @@ type channelConfig struct {
 }
 
 type Adapter struct {
-	bot      *Bot
+	bot *Bot
 	// webhookURL is the URL Telegram calls (inbound) to deliver bot updates to us.
 	// Registered with Telegram via setWebhook at startup. Empty = polling mode (not supported).
 	webhookURL string
