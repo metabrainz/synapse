@@ -17,7 +17,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const connectTTL = 5 * time.Minute
+const (
+	connectTTL = 5 * time.Minute
+
+	// telegramDeepLink is the URL the user clicks to open the Telegram app and
+	// start a conversation with the bot. Outbound — goes to the user's browser.
+	telegramDeepLink = "https://t.me/%s?start=%s" // args: botUsername, token
+)
 
 type connectHandler struct {
 	bot      *Bot
@@ -57,12 +63,15 @@ func (a *Adapter) MountRoutes(r chi.Router, userMW func(http.Handler) http.Handl
 	h := &connectHandler{bot: a.bot, rdb: rdb, channels: channels, secret: a.secret}
 	r.With(userMW).Get("/v1/me/channels/telegram/connect", h.initiate)
 	r.With(userMW).Get("/v1/me/channels/telegram/connect/{token}", h.status)
+	// Inbound: Telegram calls this URL to deliver bot updates to us.
 	r.Post("/internal/telegram/webhook", h.webhook)
 }
 
 // GET /v1/me/channels/telegram/connect
-func (h *connectHandler) initiate(w http.ResponseWriter, r *http.Request) {
-	uid, ok := requireUser(w, r)
+// Generates a one-time token, stores it in Redis, and returns a deep link the
+// user clicks to open Telegram and start the connect flow with the bot.
+func (h *connectHandler) initiate(w http.ResponseWriter, req *http.Request) {
+	uid, ok := requireUser(w, req)
 	if !ok {
 		return
 	}
@@ -74,7 +83,7 @@ func (h *connectHandler) initiate(w http.ResponseWriter, r *http.Request) {
 	}
 	token := hex.EncodeToString(raw)
 
-	ctx := r.Context()
+	ctx := req.Context()
 	if err := h.rdb.Set(ctx, connectKey(token), uid, connectTTL).Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "token storage failed")
 		return
@@ -87,19 +96,29 @@ func (h *connectHandler) initiate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{
-		"url":   fmt.Sprintf("https://t.me/%s?start=%s", username, token),
+		"url":   fmt.Sprintf(telegramDeepLink, username, token),
 		"token": token,
 	})
 }
 
 // GET /v1/me/channels/telegram/connect/{token}
-func (h *connectHandler) status(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireUser(w, r); !ok {
+// Polls whether the user has completed the connect flow. Returns "pending" until
+// the bot receives the /start message, then "connected" with the new channel ID.
+func (h *connectHandler) status(w http.ResponseWriter, req *http.Request) {
+	uid, ok := requireUser(w, req)
+	if !ok {
 		return
 	}
-	token := chi.URLParam(r, "token")
 
-	channelID, err := h.rdb.Get(r.Context(), connectDoneKey(token)).Result()
+	token := chi.URLParam(req, "token")
+	ctx := req.Context()
+
+	if owner, err := h.rdb.Get(ctx, connectKey(token)).Result(); err == nil && owner != uid {
+		writeError(w, http.StatusForbidden, "token does not belong to this user")
+		return
+	}
+
+	channelID, err := h.rdb.Get(ctx, connectDoneKey(token)).Result()
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "pending"})
 		return
@@ -111,11 +130,15 @@ func (h *connectHandler) status(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /internal/telegram/webhook
-func (h *connectHandler) webhook(w http.ResponseWriter, r *http.Request) {
-	if h.secret != "" && r.Header.Get("X-Telegram-Bot-Api-Secret-Token") != h.secret {
+// Inbound handler: Telegram calls this with bot updates. Verifies the secret
+// token, then dispatches /start messages to handleConnect.
+func (h *connectHandler) webhook(w http.ResponseWriter, req *http.Request) {
+	if h.secret == "" || req.Header.Get("X-Telegram-Bot-Api-Secret-Token") != h.secret {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
+
+	req.Body = http.MaxBytesReader(w, req.Body, 128*1024) // 128 KB — Telegram updates are small
 
 	var update struct {
 		Message *struct {
@@ -128,20 +151,20 @@ func (h *connectHandler) webhook(w http.ResponseWriter, r *http.Request) {
 			} `json:"from"`
 		} `json:"message"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&update); err != nil || update.Message == nil {
+	if err := json.NewDecoder(req.Body).Decode(&update); err != nil || update.Message == nil {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
 	text := strings.TrimSpace(update.Message.Text)
 	chatID := strconv.FormatInt(update.Message.Chat.ID, 10)
-	ctx := r.Context()
 
 	if !strings.HasPrefix(text, "/start") {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
+	ctx := req.Context()
 	token := strings.TrimSpace(strings.TrimPrefix(text, "/start"))
 	if token == "" {
 		_ = h.bot.Send(ctx, chatID, "Open the Synapse UI and click \"Connect Telegram\" to get your personal link.")
@@ -154,7 +177,7 @@ func (h *connectHandler) webhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *connectHandler) handleConnect(ctx context.Context, chatID, token, firstName string) {
-	userID, err := h.rdb.Get(ctx, connectKey(token)).Result()
+	userID, err := h.rdb.GetDel(ctx, connectKey(token)).Result()
 	if err != nil {
 		_ = h.bot.Send(ctx, chatID, "This link has expired or is invalid. Please generate a new one from the Synapse UI.")
 		return
@@ -178,7 +201,5 @@ func (h *connectHandler) handleConnect(ctx context.Context, chatID, token, first
 	}
 
 	h.rdb.Set(ctx, connectDoneKey(token), strconv.FormatInt(channelID, 10), connectTTL)
-	h.rdb.Del(ctx, connectKey(token))
-
 	_ = h.bot.Send(ctx, chatID, "✓ Connected! You'll receive Synapse notifications here.")
 }

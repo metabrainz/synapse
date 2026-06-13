@@ -15,6 +15,7 @@ type Config struct {
 	Ingest        IngestConfig            `yaml:"ingest"`
 	RateLimit     RateLimitConfig         `yaml:"rate_limit"`
 	OAuth         OAuthConfig             `yaml:"oauth"`
+	Webhook       WebhookConfig           `yaml:"webhook"`
 	Telegram      TelegramConfig          `yaml:"telegram"`
 	Observability ObservabilityConfig     `yaml:"observability"`
 	Tenants       map[string]TenantConfig `yaml:"tenants"`
@@ -36,6 +37,12 @@ type OAuthConfig struct {
 	ClientID         string `yaml:"client_id"`
 	ClientSecret     string `yaml:"client_secret"`
 	IntrospectionURL string `yaml:"introspection_url"`
+}
+
+type WebhookConfig struct {
+	// AllowPrivateURLs disables SSRF protection for webhook delivery.
+	// Never set this in production — for local development and testing only.
+	AllowPrivateURLs bool `yaml:"allow_private_urls"`
 }
 
 type TelegramConfig struct {

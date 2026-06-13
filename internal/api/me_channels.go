@@ -3,10 +3,12 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/metabrainz/synapse/internal/adapter"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
 )
 
@@ -40,6 +42,7 @@ func (h *meHandler) createChannel(w http.ResponseWriter, r *http.Request) {
 		Label       string          `json:"label"`
 		Config      json.RawMessage `json:"config"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 128*1024) // 128 KB — channel configs are small
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -48,8 +51,21 @@ func (h *meHandler) createChannel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "channel_type required")
 		return
 	}
+
+	// Check if the channel type is supported.
+	adp, ok := adapter.Registry[adapter.ChannelType(body.ChannelType)]
+	if !ok {
+		writeError(w, http.StatusBadRequest, "unsupported channel_type")
+		return
+	}
 	if len(body.Config) == 0 {
 		body.Config = json.RawMessage(`{}`)
+	}
+	if v, ok := adp.(adapter.ConfigValidator); ok {
+		if err := v.ValidateConfig(body.Config); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid config: %s", err))
+			return
+		}
 	}
 
 	id, err := h.channels.Insert(r.Context(), userchannels.UserChannel{

@@ -91,6 +91,9 @@ func main() {
 	reg := eventtype.NewRegistry(tenants)
 
 	if err := adapter.Build(ctx, adapter.Options{
+		Webhook: adapter.WebhookOptions{
+			AllowPrivateURLs: cfg.Webhook.AllowPrivateURLs,
+		},
 		Telegram: adapter.TelegramOptions{
 			BotToken:      cfg.Telegram.BotToken,
 			WebhookURL:    cfg.Telegram.WebhookURL,

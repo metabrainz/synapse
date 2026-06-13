@@ -16,13 +16,10 @@ type channelConfig struct {
 	ChatID string `json:"chat_id"`
 }
 
-// unmarshalChannelConfig is a shared helper used by Deliver and the rate limiter.
-func unmarshalChannelConfig(raw json.RawMessage, cfg *channelConfig) error {
-	return json.Unmarshal(raw, cfg)
-}
-
 type Adapter struct {
-	bot        *Bot
+	bot *Bot
+	// webhookURL is the URL Telegram calls (inbound) to deliver bot updates to us.
+	// Registered with Telegram via setWebhook at startup. Empty = polling mode (not supported).
 	webhookURL string
 	secret     string
 	rl         *rateLimiter // nil when no Redis is configured
@@ -43,6 +40,18 @@ func New(botToken, webhookURL, webhookSecret string, rdb *redis.Client, reg *eve
 		a.rl = newRateLimiter(rdb)
 	}
 	return a
+}
+
+// ValidateConfig checks that the Telegram config has a non-empty chat_id.
+func (a *Adapter) ValidateConfig(config json.RawMessage) error {
+	var cfg channelConfig
+	if err := json.Unmarshal(config, &cfg); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
+	if cfg.ChatID == "" {
+		return fmt.Errorf("chat_id is required")
+	}
+	return nil
 }
 
 // Start registers the Telegram webhook if WebhookURL is configured.
@@ -69,7 +78,7 @@ func (a *Adapter) RateLimit(ctx context.Context, msg fanout.WorkerMessage) (bool
 
 func (a *Adapter) Deliver(ctx context.Context, msg fanout.WorkerMessage) error {
 	var cfg channelConfig
-	if err := unmarshalChannelConfig(msg.ChannelConfig, &cfg); err != nil {
+	if err := json.Unmarshal(msg.ChannelConfig, &cfg); err != nil {
 		return fmt.Errorf("invalid channel config: %w", err)
 	}
 	if cfg.ChatID == "" {

@@ -15,6 +15,7 @@ package telegram
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/metabrainz/synapse/internal/fanout"
@@ -46,7 +47,7 @@ func (r *rateLimiter) RateLimit(ctx context.Context, msg fanout.WorkerMessage) (
 	var cfg channelConfig
 	// If we can't parse the chat ID we can't check the per-chat limit;
 	// skip that check and fall through to the global limit only.
-	_ = unmarshalChannelConfig(msg.ChannelConfig, &cfg)
+	_ = json.Unmarshal(msg.ChannelConfig, &cfg)
 
 	if cfg.ChatID != "" {
 		ok, err := r.perChat.AllowKey(ctx, "synapse:rl:tg:chat:"+cfg.ChatID)

@@ -10,6 +10,7 @@ package dedup
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -37,6 +38,16 @@ func (d *Deduper) Seen(ctx context.Context, deliveryID int64, attempt int) (bool
 		return false, nil // fail-open
 	}
 	return !ok, nil
+}
+
+// DeleteSeen removes the dedup key for (deliveryID, attempt).
+// Call before returning an error that triggers a Nack, so redelivery is not
+// suppressed by a key that was set before the work succeeded.
+func (d *Deduper) DeleteSeen(ctx context.Context, deliveryID int64, attempt int) {
+	if err := d.rdb.Del(ctx, fmt.Sprintf("synapse:dedup:%d:%d", deliveryID, attempt)).Err(); err != nil {
+		slog.Error("dedup: failed to delete seen key — redelivery may be suppressed",
+			"delivery_id", deliveryID, "attempt", attempt, "err", err)
+	}
 }
 
 // SeenIdempotency checks whether (tenantID, idempotencyKey) was already processed.

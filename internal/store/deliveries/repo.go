@@ -90,6 +90,20 @@ func UpdateStatus(ctx context.Context, q store.Querier, id int64, status string,
 	return err
 }
 
+// ListByEventForTenant returns deliveries for an event owned by tenantID.
+// The second return value is false when no such event exists for the tenant.
+func ListByEventForTenant(ctx context.Context, q store.Querier, eventID int64, tenantID string) ([]Delivery, bool, error) {
+	var exists bool
+	if err := q.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM events WHERE id = $1 AND tenant_id = $2)`,
+		eventID, tenantID,
+	).Scan(&exists); err != nil || !exists {
+		return nil, false, err
+	}
+	deliveries, err := ListByEvent(ctx, q, eventID)
+	return deliveries, true, err
+}
+
 func ListByEvent(ctx context.Context, q store.Querier, eventID int64) ([]Delivery, error) {
 	rows, err := q.Query(ctx,
 		`SELECT id, event_id, user_id, channel_id, channel_type, status, attempt,

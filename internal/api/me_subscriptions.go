@@ -16,6 +16,11 @@ func (h *meHandler) listSubscriptions(w http.ResponseWriter, r *http.Request) {
 	}
 	tenantID := chi.URLParam(r, "tenant_id")
 
+	if !h.reg.HasTenant(tenantID) {
+		writeError(w, http.StatusNotFound, "tenant not found")
+		return
+	}
+
 	subs, err := h.subscriptions.ListByUserTenant(r.Context(), uid, tenantID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list subscriptions failed")
@@ -103,6 +108,15 @@ func (h *meHandler) unsubscribe(w http.ResponseWriter, r *http.Request) {
 	tenantID := chi.URLParam(r, "tenant_id")
 	eventType := chi.URLParam(r, "event_type")
 	channelType := chi.URLParam(r, "channel_type")
+
+	if !h.reg.HasTenant(tenantID) {
+		writeError(w, http.StatusNotFound, "tenant not found")
+		return
+	}
+	if !h.reg.IsAllowed(tenantID, eventType, channelType) {
+		writeError(w, http.StatusBadRequest, "event_type or channel_type not permitted for this tenant")
+		return
+	}
 
 	if err := h.subscriptions.Delete(r.Context(), uid, tenantID, eventType, channelType); err != nil {
 		writeError(w, http.StatusInternalServerError, "unsubscribe failed")

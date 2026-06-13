@@ -29,6 +29,9 @@ func (e *TelegramError) Error() string {
 // Zero means Telegram did not specify a delay (use the worker's default backoff).
 func (e *TelegramError) RetryAfter() time.Duration { return e.retryAfter }
 
+// botAPIBase is the Telegram Bot API endpoint. All calls go outbound to this URL.
+const botAPIBase = "https://api.telegram.org/bot%s/%s"
+
 // Bot is a thin Telegram Bot API client. It is safe for concurrent use.
 type Bot struct {
 	token  string
@@ -101,7 +104,7 @@ func (b *Bot) call(ctx context.Context, method string, body any) (json.RawMessag
 		reqBody = bytes.NewReader(data)
 	}
 
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/%s", b.token, method)
+	url := fmt.Sprintf(botAPIBase, b.token, method)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, reqBody)
 	if err != nil {
 		return nil, err

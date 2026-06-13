@@ -1,5 +1,6 @@
 http:
   port: 8080
+  db_conns: 20
 
 postgres:
   host: localhost
@@ -32,9 +33,12 @@ ingest:
   batch_size: 50
   drain_ms: 10
 
+webhook:
+  allow_private_urls: false  # set true only in local dev to allow localhost webhook targets
+
 telegram:
   bot_token: ""
-  webhook_url: ""      # e.g. https://your-domain.com/internal/telegram/webhook
+  webhook_url: ""      # e.g. https://your-domain.com/internal/telegram/webhook — Telegram calls this
   webhook_secret: ""   # random string; sent as X-Telegram-Bot-Api-Secret-Token
 
 worker:
