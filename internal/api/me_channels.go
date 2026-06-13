@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/metabrainz/synapse/internal/adapter"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
 )
 
@@ -46,6 +47,12 @@ func (h *meHandler) createChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ChannelType == "" {
 		writeError(w, http.StatusBadRequest, "channel_type required")
+		return
+	}
+
+	// Check if the channel type is supported.
+	if _, ok := adapter.Registry[adapter.ChannelType(body.ChannelType)]; !ok {
+		writeError(w, http.StatusBadRequest, "unsupported channel_type")
 		return
 	}
 	if len(body.Config) == 0 {

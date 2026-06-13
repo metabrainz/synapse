@@ -27,7 +27,7 @@ type connectHandler struct {
 }
 
 // A connect key is used to store the token and user ID during the connect flow.
-func connectKey(token string) string     { return "synapse:tg:connect:" + token }
+func connectKey(token string) string { return "synapse:tg:connect:" + token }
 
 // A done key is used to store the channel ID after the connect flow is complete.
 func connectDoneKey(token string) string { return "synapse:tg:connect:done:" + token }
