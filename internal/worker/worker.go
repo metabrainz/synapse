@@ -70,11 +70,13 @@ func Handler(
 			slog.Info("worker: skipping duplicate", "delivery_id", msg.DeliveryID)
 			return nil
 		}
+		// Capture attempt before msg.Attempt is mutated to nextAttempt below.
 		// If we Nack (return an error), the dedup key must be cleared so that
 		// redelivery is not silently suppressed by a key set before work succeeded.
+		originalAttempt := msg.Attempt
 		defer func() {
 			if retErr != nil {
-				deduper.DeleteSeen(ctx, msg.DeliveryID, msg.Attempt)
+				deduper.DeleteSeen(ctx, msg.DeliveryID, originalAttempt)
 			}
 		}()
 
