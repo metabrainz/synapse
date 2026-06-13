@@ -138,6 +138,8 @@ func (h *connectHandler) webhook(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	req.Body = http.MaxBytesReader(w, req.Body, 128*1024) // 128 KB — Telegram updates are small
+
 	var update struct {
 		Message *struct {
 			Text string `json:"text"`

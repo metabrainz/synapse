@@ -42,6 +42,7 @@ func (h *meHandler) createChannel(w http.ResponseWriter, r *http.Request) {
 		Label       string          `json:"label"`
 		Config      json.RawMessage `json:"config"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 128*1024) // 128 KB — channel configs are small
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
