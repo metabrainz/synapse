@@ -17,7 +17,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const connectTTL = 5 * time.Minute
+const (
+	connectTTL = 5 * time.Minute
+
+	// telegramDeepLink is the URL the user clicks to open the Telegram app and
+	// start a conversation with the bot. Outbound — goes to the user's browser.
+	telegramDeepLink = "https://t.me/%s?start=%s" // args: botUsername, token
+)
 
 type connectHandler struct {
 	bot      *Bot
@@ -26,10 +32,7 @@ type connectHandler struct {
 	secret   string
 }
 
-// A connect key is used to store the token and user ID during the connect flow.
-func connectKey(token string) string { return "synapse:tg:connect:" + token }
-
-// A done key is used to store the channel ID after the connect flow is complete.
+func connectKey(token string) string     { return "synapse:tg:connect:" + token }
 func connectDoneKey(token string) string { return "synapse:tg:connect:done:" + token }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -60,13 +63,13 @@ func (a *Adapter) MountRoutes(r chi.Router, userMW func(http.Handler) http.Handl
 	h := &connectHandler{bot: a.bot, rdb: rdb, channels: channels, secret: a.secret}
 	r.With(userMW).Get("/v1/me/channels/telegram/connect", h.initiate)
 	r.With(userMW).Get("/v1/me/channels/telegram/connect/{token}", h.status)
+	// Inbound: Telegram calls this URL to deliver bot updates to us.
 	r.Post("/internal/telegram/webhook", h.webhook)
 }
 
 // GET /v1/me/channels/telegram/connect
-/*
-	Initiates the connect flow by generating a random token and storing it in Redis.
-*/
+// Generates a one-time token, stores it in Redis, and returns a deep link the
+// user clicks to open Telegram and start the connect flow with the bot.
 func (h *connectHandler) initiate(w http.ResponseWriter, req *http.Request) {
 	uid, ok := requireUser(w, req)
 	if !ok {
@@ -93,32 +96,28 @@ func (h *connectHandler) initiate(w http.ResponseWriter, req *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{
-		"url":   fmt.Sprintf("https://t.me/%s?start=%s", username, token),
+		"url":   fmt.Sprintf(telegramDeepLink, username, token),
 		"token": token,
 	})
 }
 
 // GET /v1/me/channels/telegram/connect/{token}
-/*
-	Checks the status of the connect flow by looking up the token in Redis.
-*/
+// Polls whether the user has completed the connect flow. Returns "pending" until
+// the bot receives the /start message, then "connected" with the new channel ID.
 func (h *connectHandler) status(w http.ResponseWriter, req *http.Request) {
 	uid, ok := requireUser(w, req)
 	if !ok {
 		return
 	}
 
-	// Get the token from the URL path.
 	token := chi.URLParam(req, "token")
 	ctx := req.Context()
 
-	// Check if the token belongs to the user.
 	if owner, err := h.rdb.Get(ctx, connectKey(token)).Result(); err == nil && owner != uid {
 		writeError(w, http.StatusForbidden, "token does not belong to this user")
 		return
 	}
 
-	// Check if the connect flow is complete.
 	channelID, err := h.rdb.Get(ctx, connectDoneKey(token)).Result()
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "pending"})
@@ -131,16 +130,14 @@ func (h *connectHandler) status(w http.ResponseWriter, req *http.Request) {
 }
 
 // POST /internal/telegram/webhook
-/*
-	Handles the Telegram webhook by verifying the secret token and parsing the update.
-*/
+// Inbound handler: Telegram calls this with bot updates. Verifies the secret
+// token, then dispatches /start messages to handleConnect.
 func (h *connectHandler) webhook(w http.ResponseWriter, req *http.Request) {
 	if h.secret == "" || req.Header.Get("X-Telegram-Bot-Api-Secret-Token") != h.secret {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 
-	// Parse the update from the request body.
 	var update struct {
 		Message *struct {
 			Text string `json:"text"`
@@ -160,13 +157,11 @@ func (h *connectHandler) webhook(w http.ResponseWriter, req *http.Request) {
 	text := strings.TrimSpace(update.Message.Text)
 	chatID := strconv.FormatInt(update.Message.Chat.ID, 10)
 
-	// Check if the message is a start command.
 	if !strings.HasPrefix(text, "/start") {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	// Get the token from the start command.
 	ctx := req.Context()
 	token := strings.TrimSpace(strings.TrimPrefix(text, "/start"))
 	if token == "" {
