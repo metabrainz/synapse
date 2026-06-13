@@ -10,6 +10,7 @@ http:
   port: 8080
 
 {{ $pg := service "virtual.virtual-pgbouncer-master" -}}
+{{ $pgdirect := service "virtual-postgres-master" -}}
 postgres:
   host: {{ if $pg }}{{ with index $pg 0 }}{{ .Address }}{{ end }}{{ else }}SERVICEDOESNOTEXIST_pgbouncer-master{{ end }}
   port: {{ if $pg }}{{ with index $pg 0 }}{{ .Port }}{{ end }}{{ else }}0{{ end }}
@@ -18,7 +19,7 @@ postgres:
   dbname: synapse
   sslmode: disable
   pgbouncer: true
-  direct_dsn: "{{ template "KEY" "pg_direct_dsn" }}"
+  direct_dsn: "postgres://synapse:{{ template "KEY" "pg_password" }}@{{ if $pgdirect }}{{ with index $pgdirect 0 }}{{ .Address }}:{{ .Port }}{{ end }}{{ else }}SERVICEDOESNOTEXIST_virtual-postgres-master{{ end }}/synapse?sslmode=disable"
 
 {{ $redis := service "synapse-redis" -}}
 redis:
