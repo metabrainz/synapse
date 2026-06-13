@@ -26,7 +26,7 @@ var Registry map[ChannelType]Adapter
 // Must be called once at program startup before any other adapter functions.
 func Build(ctx context.Context, opts Options) error {
 	Registry = map[ChannelType]Adapter{
-		Webhook: webhook.New(),
+		Webhook: webhook.New(opts.Webhook.AllowPrivateURLs),
 	}
 
 	if opts.Telegram.BotToken != "" {

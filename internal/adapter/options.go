@@ -14,8 +14,15 @@ type TelegramOptions struct {
 	WebhookSecret string // forwarded as X-Telegram-Bot-Api-Secret-Token
 }
 
+// WebhookOptions configures the webhook adapter.
+type WebhookOptions struct {
+	// AllowPrivateURLs disables the SSRF IP blocklist. Set true only in development.
+	AllowPrivateURLs bool
+}
+
 // Options holds per-adapter configuration passed to Build.
 type Options struct {
+	Webhook  WebhookOptions
 	Telegram TelegramOptions
 	Redis    *redis.Client
 	// Registry supplies event templates to the Telegram adapter.
