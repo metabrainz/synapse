@@ -51,19 +51,11 @@ Bridges the RabbitMQ ingest queue to the Postgres outbox. This is the high-throu
 
 ### `cmd/relay` — Outbox relay
 
-Bridges the Postgres outbox to RabbitMQ. Exists because you cannot atomically commit to Postgres and publish to RabbitMQ in one transaction.
-
-- Claims rows with `FOR UPDATE SKIP LOCKED` — multiple workers claim disjoint batches without coordination.
-- Each worker holds its own AMQP channel in confirm mode so publish round-trips are independent.
-- Deletes outbox rows only after the broker confirms receipt (publisher confirms).
+Bridges the Postgres outbox to RabbitMQ. Exists because you cannot atomically commit to Postgres and publish to RabbitMQ in one transaction. See [relay.md](relay.md) for the full tick protocol.
 
 ### `cmd/worker` — Delivery worker
 
-Consumes from the RabbitMQ `deliveries.{type}` queue and dispatches to the target system via the channel's adapter. Each channel type has its own queue, its own adapter implementation, and its own pool of worker goroutines. Adding a new connector means adding an adapter sub-package and one line in the registry — no other changes needed.
-
-- On success: acks the message, marks delivery `DELIVERED` in Postgres.
-- On failure: schedules a retry via the retry exchange (exponential backoff); marks `DEAD` after `max_attempts`.
-- Redis dedup prevents double-processing on AMQP redelivery.
+Consumes from the RabbitMQ `deliveries.{type}` queue and dispatches to the target system via the channel's adapter. Each channel type has its own queue, its own adapter implementation, and its own pool of worker goroutines. Adding a new connector means adding an adapter sub-package and one line in the registry — no other changes needed. See [worker.md](worker.md) for the per-message handler logic.
 
 ### `cmd/cleanup` — Housekeeping job
 
@@ -85,13 +77,13 @@ Adding a new tenant or event type requires a code change and a redeploy. This is
 
 ## Three-gate fanout
 
-When the ingest consumer processes an event, three gates decide which deliveries to create:
+When the ingest consumer processes an event, three conditions must all pass for a delivery to be created:
 
-1. **Static registry** (`schema.Registry.IsAllowed`) — is this `(tenant_id, event_type, channel_type)` combination declared in config? Rejects unknown combos at zero DB cost.
-2. **Tenant-channel mapping** (`user_tenant_channel_mapping`) — has the user assigned a channel of that type for this tenant?
-3. **Event subscription** (`user_event_subscriptions`) — has the user subscribed to this event type on that channel type?
+1. **Tenant-channel mapping** (`user_tenant_channel_mapping`) — has the user assigned an active channel of that type for this tenant?
+2. **Event subscription** (`user_event_subscriptions`) — has the user subscribed to this event type on that channel type? Subscriptions can be exact (`listen`) or wildcard (`*`, matching every event type from that tenant).
+3. **Static registry** — is the `(tenant_id, event_type, channel_type)` combination declared in config? Applied last as a safeguard against stale cache entries referencing channel types removed from config.
 
-A delivery row is created only when all three gates pass. The subscription cache (below) holds gates 2 and 3 in memory.
+Gates 1 and 2 are resolved together in a single SQL JOIN (or an in-memory cache lookup). Gate 3 is applied by the fanout layer via `filterAllowed` after the lookup returns. The subscription cache (below) holds gates 1 and 2 in memory.
 
 ---
 
@@ -103,10 +95,11 @@ The ingest consumer resolves user subscriptions against an **in-memory cache** r
 - On subscription change: Postgres sends a `NOTIFY subscription_changes`. The cache rebuilds immediately on receipt.
 - Periodic rebuild every 30 s as a safety net in case a notification is missed.
 - The LISTEN connection uses a **direct Postgres DSN** (bypassing PgBouncer), because PgBouncer transaction mode drops session-level `LISTEN` state between checkouts.
+- The cache maintains two maps: `exact` (keyed by `tenantID:userID:eventType`) for specific subscriptions, and `wildcard` (keyed by `tenantID:userID`) for `*` subscriptions. Exact lookups are O(1); wildcard lookups are O(n) over the user's wildcard entries — acceptable because users won't have thousands of them.
 
 ---
 
-## RabbitMQ topology
+## RabbitMQ topology ([infra.md](infra.md))
 
 ```
 Exchange: deliveries        (topic) — main dispatch
@@ -122,7 +115,7 @@ Exchange: events.ingest  (direct) — ingest queue
 Queue:    events.ingest
 ```
 
-The retry loop is entirely within RabbitMQ: the worker publishes to `deliveries.retry` with a per-message TTL; when that TTL expires, RabbitMQ routes the message back to `deliveries.{type}` via the DLX. New channel types get their own queue set automatically at startup — adding a connector requires no topology changes.
+New channel types get their own queue set automatically at startup — adding a connector requires no topology changes.
 
 ---
 
