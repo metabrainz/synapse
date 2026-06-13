@@ -79,6 +79,19 @@ func InsertBatch(ctx context.Context, q store.Querier, evs []Event) ([]int64, er
 	return ids, rows.Err()
 }
 
+// GetIDByIdempotencyKey returns the event id for a tenant idempotency key, or 0 if none.
+func GetIDByIdempotencyKey(ctx context.Context, q store.Querier, tenantID, idempotencyKey string) (int64, error) {
+	var id int64
+	err := q.QueryRow(ctx,
+		`SELECT id FROM events WHERE tenant_id = $1 AND idempotency_key = $2`,
+		tenantID, idempotencyKey,
+	).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
+}
+
 func GetByID(ctx context.Context, q store.Querier, id int64) (*Event, error) {
 	var event Event
 	err := q.QueryRow(ctx,

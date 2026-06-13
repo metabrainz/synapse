@@ -38,6 +38,16 @@ func (h *meHandler) assignTenantChannel(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	ch, err := h.channels.GetByID(r.Context(), body.ChannelID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "assign channel failed")
+		return
+	}
+	if ch == nil || ch.UserID != uid || ch.ChannelType != channelType {
+		writeError(w, http.StatusNotFound, "channel not found")
+		return
+	}
+
 	if err := h.tenantMappings.Upsert(r.Context(), usertenant.Mapping{
 		UserID:        uid,
 		TenantID:      tenantID,

@@ -92,7 +92,7 @@ func (h *ingestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if req.IdempotencyKey != nil {
 		seen, _ := h.deduper.SeenIdempotency(ctx, tenant.ID, *req.IdempotencyKey)
 		if seen {
-			writeJSON(w, http.StatusOK, map[string]any{"deduplicated": true})
+			h.writeDeduplicated(w, r, tenant.ID, *req.IdempotencyKey)
 			return
 		}
 	}
@@ -124,8 +124,8 @@ func (h *ingestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		// PG unique constraint on idempotency_key — treat as deduplicated.
-		if store.IsUniqueViolation(err) {
-			writeJSON(w, http.StatusOK, map[string]any{"deduplicated": true})
+		if store.IsUniqueViolation(err) && req.IdempotencyKey != nil {
+			h.writeDeduplicated(w, r, tenant.ID, *req.IdempotencyKey)
 			return
 		}
 		// Suppress noise from clients that cancelled mid-request
@@ -146,4 +146,12 @@ func (h *ingestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		EventID:       eventID,
 		DeliveryCount: deliveryCount,
 	})
+}
+
+func (h *ingestHandler) writeDeduplicated(w http.ResponseWriter, r *http.Request, tenantID, idempotencyKey string) {
+	resp := map[string]any{"deduplicated": true}
+	if id, err := events.GetIDByIdempotencyKey(r.Context(), h.pool, tenantID, idempotencyKey); err == nil && id > 0 {
+		resp["event_id"] = id
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
