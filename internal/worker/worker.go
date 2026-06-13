@@ -39,7 +39,7 @@ func Handler(
 	deduper *dedup.Deduper,
 	pool *pgxpool.Pool,
 ) rabbitmq.Handler {
-	return func(ctx context.Context, body []byte) error {
+	return func(ctx context.Context, body []byte) (retErr error) {
 		var msg fanout.WorkerMessage
 		if err := json.Unmarshal(body, &msg); err != nil {
 			// Malformed message — reject to DLQ, no retry.
@@ -70,6 +70,13 @@ func Handler(
 			slog.Info("worker: skipping duplicate", "delivery_id", msg.DeliveryID)
 			return nil
 		}
+		// If we Nack (return an error), the dedup key must be cleared so that
+		// redelivery is not silently suppressed by a key set before work succeeded.
+		defer func() {
+			if retErr != nil {
+				deduper.DeleteSeen(ctx, msg.DeliveryID, msg.Attempt)
+			}
+		}()
 
 		err := ad.Deliver(ctx, msg)
 

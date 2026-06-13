@@ -3,6 +3,7 @@ package rabbitmq
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -71,11 +72,20 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 			if !ok {
 				return fmt.Errorf("consumer channel closed")
 			}
-			if err := handler(ctx, msg.Body); err != nil {
-				msg.Reject(false) // false = don't requeue; DLX routes to dead queue
-			} else {
-				msg.Ack(false)
-			}
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						slog.Error("worker: handler panic", "queue", queue, "panic", r)
+						msg.Reject(false)
+					}
+				}()
+				if err := handler(ctx, msg.Body); err != nil {
+					slog.Error("worker: handler failed, rejecting to DLQ", "queue", queue, "err", err)
+					msg.Reject(false)
+				} else {
+					msg.Ack(false)
+				}
+			}()
 		}
 	}
 }
