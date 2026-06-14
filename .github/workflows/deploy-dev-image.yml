@@ -1,0 +1,38 @@
+name: Push development image
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'PR number (if set, ignores branch above)'
+        required: false
+        type: string
+      tag:
+        description: 'Docker image tag'
+        required: true
+        default: 'prod'
+
+jobs:
+  dev:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        if: ${{ github.event.inputs.pr == 0 }}
+
+      - uses: actions/checkout@v4
+        if: ${{ github.event.inputs.pr != 0 }}
+        with:
+          ref: ${{ format('refs/pull/{0}/head', github.event.inputs.pr) }}
+
+      - name: Login to Docker Hub
+        run: echo ${{ secrets.DOCKER_HUB_PASSWORD }} | docker login -u ${{ secrets.DOCKER_HUB_USERNAME }} --password-stdin
+        continue-on-error: true
+
+      - name: Build and push development image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: metabrainz/synapse:${{ github.event.inputs.tag }}
+          build-args: GIT_COMMIT_SHA=${{ github.sha }}
