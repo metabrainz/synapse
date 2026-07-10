@@ -14,7 +14,6 @@ import (
 
 	"github.com/metabrainz/synapse/internal/adapter"
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
-	"github.com/metabrainz/synapse/internal/dedup"
 )
 
 // Run starts concurrency worker goroutines for channelType, each with its own
@@ -27,7 +26,6 @@ func Run(
 	concurrency, prefetch int,
 	amqpURL string,
 	ad adapter.Adapter,
-	deduper *dedup.Deduper,
 	pool *pgxpool.Pool,
 ) error {
 	g, gctx := errgroup.WithContext(ctx)
@@ -40,7 +38,7 @@ func Run(
 			}
 			defer consumer.Close()
 
-			handler := Handler(channelType, ad, consumer, deduper, pool)
+			handler := Handler(channelType, ad, consumer, pool)
 			return consumer.Run(gctx, handler)
 		})
 	}

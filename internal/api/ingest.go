@@ -9,7 +9,6 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metabrainz/synapse/internal/api/middleware"
-	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/ingest"
@@ -18,10 +17,9 @@ import (
 )
 
 type ingestHandler struct {
-	pool    *pgxpool.Pool
-	fan     *fanout.Fanout
-	deduper *dedup.Deduper
-	reg     *eventtype.Registry
+	pool *pgxpool.Pool
+	fan  *fanout.Fanout
+	reg  *eventtype.Registry
 }
 
 type ingestRequestBody struct {
@@ -72,7 +70,6 @@ func (h *ingestHandler) handle(ctx context.Context, input *ingestInput) (*ingest
 		return nil, huma.Error400BadRequest(fmt.Sprintf("payload validation failed: %s", err))
 	}
 
-	// Dry-run: preview matching channels without writing anything.
 	if input.DryRun {
 		count, err := h.fan.Preview(ctx, tenant.ID, input.Body.EventType, recipients)
 		if err != nil {
@@ -81,15 +78,8 @@ func (h *ingestHandler) handle(ctx context.Context, input *ingestInput) (*ingest
 		return &ingestOutput{Status: 200, Body: ingestResponseBody{DryRun: true, DeliveryCount: &count}}, nil
 	}
 
-	// Step 1: Redis idempotency pre-check (fail-open — deduper returns false on Redis error).
-	if input.Body.IdempotencyKey != nil {
-		seen, _ := h.deduper.SeenIdempotency(ctx, tenant.ID, *input.Body.IdempotencyKey)
-		if seen {
-			return h.deduplicated(ctx, tenant.ID, *input.Body.IdempotencyKey)
-		}
-	}
-
-	// Step 2: Atomic transaction — event + deliveries + outbox.
+	// PG unique constraint on idempotency_key is the single dedup layer.
+	// No Redis pre-check — the ingest consumer already proves PG-only dedup works.
 	var eventID int64
 	var deliveryCount int
 	err := store.WithTx(ctx, h.pool, func(q store.Querier) error {
@@ -113,7 +103,6 @@ func (h *ingestHandler) handle(ctx context.Context, input *ingestInput) (*ingest
 		return nil
 	})
 	if err != nil {
-		// PG unique constraint on idempotency_key — treat as deduplicated.
 		if store.IsUniqueViolation(err) && input.Body.IdempotencyKey != nil {
 			return h.deduplicated(ctx, tenant.ID, *input.Body.IdempotencyKey)
 		}
@@ -121,12 +110,6 @@ func (h *ingestHandler) handle(ctx context.Context, input *ingestInput) (*ingest
 			slog.ErrorContext(ctx, "event ingestion failed", "tenant", tenant.ID, "err", err)
 		}
 		return nil, huma.Error500InternalServerError("event ingestion failed")
-	}
-
-	// Step 3: Mark idempotency key in Redis AFTER commit (set before commit risks
-	// losing the event if we crash between SET and INSERT).
-	if input.Body.IdempotencyKey != nil {
-		h.deduper.MarkIdempotency(ctx, tenant.ID, *input.Body.IdempotencyKey)
 	}
 
 	return &ingestOutput{Status: 202, Body: ingestResponseBody{EventID: &eventID, DeliveryCount: &deliveryCount}}, nil

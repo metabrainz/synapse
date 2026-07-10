@@ -11,7 +11,6 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
@@ -28,7 +27,6 @@ func registerRoutes(
 	api huma.API,
 	pool *pgxpool.Pool,
 	fan *fanout.Fanout,
-	deduper *dedup.Deduper,
 	reg *eventtype.Registry,
 	userChannels *userchannels.Repo,
 	tenantMappings *usertenant.Repo,
@@ -36,7 +34,7 @@ func registerRoutes(
 ) {
 	// --- Surface A: tenant API key ---
 
-	ing := &ingestHandler{pool: pool, fan: fan, deduper: deduper, reg: reg}
+	ing := &ingestHandler{pool: pool, fan: fan, reg: reg}
 
 	huma.Register(api, huma.Operation{
 		OperationID:   "ingest-event",

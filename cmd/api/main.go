@@ -15,7 +15,6 @@ import (
 	"github.com/metabrainz/synapse/internal/adapter"
 	"github.com/metabrainz/synapse/internal/api"
 	"github.com/metabrainz/synapse/internal/config"
-	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/oauth"
@@ -113,7 +112,6 @@ func main() {
 	}
 
 	fan := fanout.New(cache, adapter.MaxAttemptsFor, reg)
-	deduper := dedup.New(rdb)
 
 	var limiter *ratelimit.Limiter
 	if cfg.RateLimit.Burst > 0 {
@@ -136,7 +134,6 @@ func main() {
 			TenantMappings: tenantMappings,
 			Subscriptions:  eventSubs,
 			Fanout:         fan,
-			Deduper:        deduper,
 			Registry:       reg,
 		},
 	)

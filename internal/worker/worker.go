@@ -11,7 +11,6 @@ import (
 
 	"github.com/metabrainz/synapse/internal/adapter"
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
-	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/store/deliveries"
 )
@@ -35,7 +34,6 @@ func Handler(
 	channelType string,
 	ad adapter.Adapter,
 	consumer *rabbitmq.Consumer,
-	deduper *dedup.Deduper,
 	pool *pgxpool.Pool,
 ) rabbitmq.Handler {
 	return func(ctx context.Context, body []byte) error {
@@ -44,8 +42,6 @@ func Handler(
 			return fmt.Errorf("unmarshal worker message: %w", err)
 		}
 
-		// Rate limit runs before dedup so the re-queued copy arrives with the same
-		// attempt counter and is not suppressed by a key already set here.
 		if rl, ok := ad.(adapter.RateLimiter); ok {
 			if allowed, retryAfter := rl.RateLimit(ctx, msg); !allowed {
 				ttl := max(retryAfter.Milliseconds(), 1000)
@@ -58,27 +54,8 @@ func Handler(
 			}
 		}
 
-		// SETNX on (deliveryID, attempt): same attempt = AMQP redelivery → skip;
-		// bumped attempt = legitimate retry → new key → process. Fail-open on Redis errors.
-		if seen, _ := deduper.Seen(ctx, msg.DeliveryID, msg.Attempt); seen {
-			slog.Info("worker: skipping duplicate", "delivery_id", msg.DeliveryID)
-			return nil
-		}
-		// Capture before msg.Attempt is mutated to nextAttempt below.
-		// delivered stays false on any non-success path — including panics, which never
-		// set a named return — so the dedup key is always cleared on failure and
-		// redelivery is not silently suppressed.
-		originalAttempt := msg.Attempt
-		delivered := false
-		defer func() {
-			if !delivered {
-				deduper.DeleteSeen(ctx, msg.DeliveryID, originalAttempt)
-			}
-		}()
-
 		deliveryErr := ad.Deliver(ctx, msg)
 		if deliveryErr == nil {
-			delivered = true
 			if dbErr := deliveries.UpdateStatus(ctx, pool, msg.DeliveryID, deliveries.StatusDelivered, msg.Attempt+1, nil); dbErr != nil {
 				slog.Error("worker: mark delivered", "delivery_id", msg.DeliveryID, "err", dbErr)
 			}

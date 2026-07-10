@@ -13,7 +13,6 @@ import (
 	"github.com/metabrainz/synapse/internal/adapter"
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
 	"github.com/metabrainz/synapse/internal/config"
-	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/observability"
 	"github.com/metabrainz/synapse/internal/store"
@@ -72,7 +71,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	deduper := dedup.New(rdb)
 	g, gctx := errgroup.WithContext(ctx)
 
 	for channelType, chanCfg := range cfg.Worker.Channels {
@@ -83,7 +81,7 @@ func main() {
 		}
 		slog.Info("worker: starting", "type", channelType, "concurrency", chanCfg.Concurrency, "prefetch", chanCfg.Prefetch)
 		g.Go(func() error {
-			return worker.Run(gctx, channelType, chanCfg.Concurrency, chanCfg.Prefetch, cfg.RabbitMQ.URL, ad, deduper, pool)
+			return worker.Run(gctx, channelType, chanCfg.Concurrency, chanCfg.Prefetch, cfg.RabbitMQ.URL, ad, pool)
 		})
 	}
 

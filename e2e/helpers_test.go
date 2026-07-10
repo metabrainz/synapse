@@ -23,7 +23,6 @@ import (
 	"github.com/metabrainz/synapse/internal/broker"
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
 	"github.com/metabrainz/synapse/internal/config"
-	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/oauth"
@@ -52,7 +51,6 @@ type env struct {
 	amqpURL string
 	apiKey  string              // static tenant API key for testTenantID
 	fan     *fanout.Fanout      // shared with the HTTP server — cache-backed in tests
-	deduper *dedup.Deduper      // shared with workers — backed by the test Redis instance
 	pub     *rabbitmq.Publisher // long-lived publisher used by relayTick
 	stub    *stubIntrospector
 }
@@ -130,7 +128,6 @@ func setup(t *testing.T) *env {
 	}
 
 	fan := fanout.New(cache, adapter.MaxAttemptsFor, reg)
-	deduper := dedup.New(rdb)
 
 	stub := newStubIntrospector()
 
@@ -138,15 +135,16 @@ func setup(t *testing.T) *env {
 		api.Config{
 			Introspector: stub,
 		},
-		pool,
-		rdb,
-		users.New(pool),
-		userchannels.New(pool),
-		usertenant.New(pool),
-		usereventsubs.New(pool),
-		fan,
-		deduper,
-		reg,
+		api.Deps{
+			Pool:           pool,
+			Redis:          rdb,
+			Users:          users.New(pool),
+			UserChannels:   userchannels.New(pool),
+			TenantMappings: usertenant.New(pool),
+			Subscriptions:  usereventsubs.New(pool),
+			Fanout:         fan,
+			Registry:       reg,
+		},
 	)
 
 	srv := httptest.NewServer(router)
@@ -166,7 +164,6 @@ func setup(t *testing.T) *env {
 		amqpURL: amqpURL,
 		apiKey:  testAPIKey,
 		fan:     fan,
-		deduper: deduper,
 		pub:     pub,
 		stub:    stub,
 	}
@@ -304,7 +301,7 @@ func (e *env) startWorker(channelType string, ad adapter.Adapter) context.Cancel
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		worker.Run(ctx, channelType, 1, 1, e.amqpURL, ad, e.deduper, e.pool)
+		worker.Run(ctx, channelType, 1, 1, e.amqpURL, ad, e.pool)
 	}()
 	e.t.Cleanup(func() { cancel(); <-done })
 	return cancel

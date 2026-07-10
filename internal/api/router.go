@@ -14,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metabrainz/synapse/internal/adapter"
 	"github.com/metabrainz/synapse/internal/api/middleware"
-	"github.com/metabrainz/synapse/internal/dedup"
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/oauth"
@@ -46,7 +45,6 @@ type Deps struct {
 	TenantMappings *usertenant.Repo
 	Subscriptions  *usereventsubs.Repo
 	Fanout         *fanout.Fanout
-	Deduper        *dedup.Deduper
 	Registry       *eventtype.Registry
 }
 
@@ -163,7 +161,7 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 		},
 	}
 
-	registerRoutes(api, d.Pool, d.Fanout, d.Deduper, d.Registry, d.UserChannels, d.TenantMappings, d.Subscriptions)
+	registerRoutes(api, d.Pool, d.Fanout, d.Registry, d.UserChannels, d.TenantMappings, d.Subscriptions)
 
 	for _, ct := range adapter.ChannelTypes() {
 		if rp, ok := adapter.Registry[ct].(adapter.RouteProvider); ok {

@@ -43,10 +43,7 @@ type ConfigValidator interface {
 
 // RateLimiter is implemented by adapters that enforce destination-level rate limits
 // (e.g. Telegram's 1 msg/user/s and 30 msg/s global caps).
-//
-// The worker checks this BEFORE the dedup layer so that rate-limited messages can
-// be re-queued with the same attempt counter — spending a dedup slot would cause
-// the message to be silently dropped when it comes back off the retry queue.
+// The worker checks this before delivery and re-queues with the same attempt counter.
 type RateLimiter interface {
 	// RateLimit reports whether the message may be sent now.
 	// Returns (true, 0) if allowed; (false, retryAfter) if the caller should
