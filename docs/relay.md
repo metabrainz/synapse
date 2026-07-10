@@ -107,7 +107,7 @@ SET status = 'PENDING', locked_by = NULL, locked_at = NULL
 WHERE status = 'PUBLISHING' AND locked_at < NOW() - INTERVAL '5 min'
 ```
 
-This produces at-least-once delivery: the recovered rows will be published again. Workers downstream handle re-delivery via their own Redis dedup check (keyed by `deliveryID + attempt`).
+This produces at-least-once delivery: the recovered rows will be published again. Workers downstream accept at-least-once semantics — a redelivered message may result in a duplicate notification, which is harmless for this system.
 
 ### Why 5 minutes?
 

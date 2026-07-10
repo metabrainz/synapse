@@ -46,10 +46,7 @@ flowchart TD
     B -->|yes| C[PublishRetry with delay]
     C --> C2([Ack original])
 
-    B -->|no| D{Dedup: Seen before?}
-    D -->|yes — AMQP redelivery| D2([Ack and skip])
-
-    D -->|no — set dedup key| E[Adapter.Deliver]
+    B -->|no| E[Adapter.Deliver]
 
     E -->|success| F[UpdateStatus DELIVERED]
     F --> F2([Ack])
@@ -65,46 +62,34 @@ flowchart TD
     I -->|publish failed| K([Nack → redelivery])
 ```
 
-> On every Nack path (exhausted retries, PublishRetry failure) the dedup key is deleted via a `defer`, so redelivery is not silently suppressed.
-
 ### 1. Rate limit check
-If the adapter implements `RateLimiter`, this runs **before** dedup. If rate-limited, the message is re-queued via `PublishRetry` with the adapter-specified delay and the original is Acked. No dedup key is touched — when the message comes back, it will be processed fresh.
+If the adapter implements `RateLimiter`, the rate limit is checked first. If rate-limited, the message is re-queued via `PublishRetry` with the adapter-specified delay and the original is Acked.
 
-Why before dedup: if dedup ran first, the SetNX would consume the key for this `(deliveryID, attempt)` pair. The re-queued copy arrives with the same attempt number and would be silently dropped.
-
-### 2. Dedup check
-`Seen(deliveryID, attempt)` does a Redis `SETNX` on key `synapse:dedup:<id>:<attempt>`.
-
-- Key not set → SetNX succeeds → process the message.
-- Key already set → this is an AMQP redelivery of a message we already processed → Ack and skip.
-
-Keying by **attempt** is intentional: a legitimate retry has a bumped attempt counter and gets a fresh key. Only true redeliveries (same attempt) are suppressed.
-
-The dedup key is deleted if the handler returns an error (Nack path). This ensures a redelivery after a failed `PublishRetry` is not silently dropped. Fail-open on Redis errors — the handler proceeds and the PG unique constraint is the hard backstop.
-
-
-### 3. Deliver
+### 2. Deliver
 Calls `adapter.Deliver(ctx, msg)`. The `WorkerMessage` carries a snapshot of all config at fan-out time: channel config, payload, attempt counter, max attempts. Config changes after fan-out do not affect in-flight messages.
 
-### 4. Success path
+### 3. Success path
 Update delivery status to `DELIVERED` in Postgres. Ack the message.
 
-### 5. Retriable failure
+### 4. Retriable failure
 Bump the attempt counter in the message, marshal it, publish to the retry exchange with exponential backoff (30s → 60s → 120s → … capped at 30 min). If the adapter signals a specific `retry_after`, use that if it's longer than the computed backoff. Update status to `RETRYING`. Ack the original.
 
-### 6. Exhausted retries
+### 5. Exhausted retries
 `attempt >= maxAttempts` → capture to Sentry, update status to `DEAD`, return error → Nack → DLQ.
+
+### At-least-once delivery
+
+Workers accept at-least-once delivery semantics. If a worker crashes or a message is redelivered by RabbitMQ, the same notification may be sent more than once. For a notification system, this is acceptable — a user receiving a duplicate notification is harmless compared to missing one entirely.
 
 ### Panic safety
 If the handler panics (nil pointer in an adapter, bad JSON, etc.), `consumer.go` wraps the call in a `recover()`. The message is Rejected to DLQ, the panic is logged, and the goroutine continues processing the next message — the pool does not drain.
 
 ## Summary Table
 
-| Outcome | Dedup key | Original message | Next step |
-|---|---|---|---|
-| Redelivery (already processed) | exists | Ack | Nothing |
-| Success | stays set | Ack | Done |
-| Rate limited | not set | Ack | Re-queued with delay |
-| Retriable failure | deleted on Nack | Ack (after retry published) | Retry queue → back to main |
-| PublishRetry failed | deleted | Nack | RabbitMQ redelivers |
-| Exhausted retries | deleted on Nack | Nack | Dead queue |
+| Outcome | Original message | Next step |
+|---|---|---|
+| Success | Ack | Done |
+| Rate limited | Ack | Re-queued with delay |
+| Retriable failure | Ack (after retry published) | Retry queue → back to main |
+| PublishRetry failed | Nack | RabbitMQ redelivers |
+| Exhausted retries | Nack | Dead queue |

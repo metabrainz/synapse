@@ -33,25 +33,25 @@ How Synapse behaves when its dependencies degrade or go down.
 
 **Recovery**: ingest and worker restart and reconnect. Relay reconnects inline on the next tick. All messages that were in the queues are still there.
 
-**Important**: if the relay or worker crashes while holding unacked messages, RabbitMQ automatically requeues them after the connection closes. Worker dedup (`synapse:dedup:{delivery_id}:{attempt}`) handles the resulting redeliveries.
+**Important**: if the relay or worker crashes while holding unacked messages, RabbitMQ automatically requeues them after the connection closes. A redelivered message may result in a duplicate notification, which is harmless for this system.
 
 ---
 
 ## Redis goes down
 
-Redis is used for three things. All three fail open.
-
+Redis is used for rate limiting, OAuth token caching, and Telegram channel linking. All fail open.
 
 | Feature                   | Behaviour when Redis is down                                                                                                                                                                                               |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Rate limiting**         | `Allow()` returns an error → middleware lets the request through. Traffic is unthrottled until Redis recovers.                                                                                                             |
-| **Delivery dedup**        | `Seen()` fails open → dedup is skipped → delivery proceeds. `Seen()` uses `SETNX` — the key is set at the start of processing, not after. On a Nack path, `DeleteSeen()` clears it so redelivery is not suppressed. With Redis down, both calls fail open, so the same `(deliveryID, attempt)` pair may be processed more than once — the PG unique constraint is the hard backstop against duplicate DB writes. |
-| **Idempotency key check** | Pre-check skipped → request proceeds. If the key was already processed, the Postgres unique constraint on `(tenant_id, idempotency_key)` catches the duplicate and returns a deduplicated response.                        |
 | **OAuth token cache**     | Cache miss on every request → every Surface B call hits the MB introspection endpoint directly. MB becomes the bottleneck. Fails open: requests still succeed as long as MB is reachable.                                  |
+| **Telegram rate limiting** | Per-chat and global token buckets fail open → Telegram API may reject with 429, triggering the normal retry flow.                                                                                                         |
+
+**Idempotency** is handled by the PostgreSQL unique constraint on `(tenant_id, idempotency_key)`. Duplicate requests hit the constraint and return a `200` response with the original event ID.
 
 **Tenant auth is unaffected**: Surface A auth is an O(1) lookup against the static in-memory registry — no Redis involved.
 
-**Recovery**: automatic. All three features resume normal behaviour as soon as Redis is reachable again.
+**Recovery**: automatic. All features resume normal behaviour as soon as Redis is reachable again.
 
 ---
 

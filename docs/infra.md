@@ -21,7 +21,7 @@ RabbitMQ is a message broker — producers publish messages, consumers read them
 - **Retry:** publish to a TTL queue whose DLX points back to the main queue — messages are held for the TTL duration, then re-queued automatically.
 - **Dead-lettering:** Nack on the main queue routes to a dead queue for manual inspection.
 
-**At-least-once delivery** — RabbitMQ guarantees a message will be delivered at least once, but may redeliver it (e.g. if a consumer crashes before acking). Consumers must be idempotent or deduplicate.
+**At-least-once delivery** — RabbitMQ guarantees a message will be delivered at least once, but may redeliver it (e.g. if a consumer crashes before acking). For a notification system, occasional duplicate delivery is acceptable.
 
 **Publisher confirms** — a channel-level protocol where the broker sends an explicit Ack or Nack for every published message. Without confirms, `Publish` is fire-and-forget: the call returns as soon as the message leaves the socket, with no guarantee the broker persisted it. With confirms enabled, the publisher knows whether the broker received each message and can retry or surface errors for any that were NACKed. To avoid a per-message round-trip, publish the entire batch first (Phase A), then drain the confirms channel in one pass (Phase B).
 
