@@ -128,4 +128,3 @@ func ListByEvent(ctx context.Context, q store.Querier, eventID int64) ([]Deliver
 	}
 	return out, rows.Err()
 }
-

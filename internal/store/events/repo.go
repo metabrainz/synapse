@@ -91,4 +91,3 @@ func GetIDByIdempotencyKey(ctx context.Context, q store.Querier, tenantID, idemp
 	}
 	return id, err
 }
-

@@ -10,8 +10,10 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/metabrainz/synapse/internal/store"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	tcrabbitmq "github.com/testcontainers/testcontainers-go/modules/rabbitmq"
@@ -105,9 +107,14 @@ func NewTestPool(ctx context.Context, t *testing.T) *pgxpool.Pool {
 	_, filename, _, _ := runtime.Caller(0)
 	migrationsDir := filepath.Join(filepath.Dir(filename), "..", "migrations")
 
-	if err := store.Migrate(toPgx5URL(dsn), migrationsDir); err != nil {
+	m, err := migrate.New("file://"+migrationsDir, toPgx5URL(dsn))
+	if err != nil {
+		t.Fatalf("init migrate: %v", err)
+	}
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		t.Fatalf("run migrations: %v", err)
 	}
+	m.Close()
 
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
