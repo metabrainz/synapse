@@ -2,11 +2,12 @@ package relay
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/metabrainz/synapse/internal/broker"
@@ -14,6 +15,12 @@ import (
 )
 
 const publishTimeout = 5 * time.Second
+
+func randHex() string {
+	var b [16]byte
+	rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
 
 type Relay struct {
 	pool      *pgxpool.Pool
@@ -32,7 +39,7 @@ func New(pool *pgxpool.Pool, pub broker.Publisher, pollMs, batchSize int) *Relay
 		pub:       pub,
 		pollMs:    pollMs,
 		batchSize: batchSize,
-		workerID:  uuid.NewString(),
+		workerID:  randHex(),
 	}
 }
 

@@ -42,7 +42,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	flushSentry, err := observability.InitSentry(cfg.Observability.SentryDSN, cfg.Observability.Environment, cfg.Observability.Release)
+	flushSentry, err := observability.InitSentry(cfg.Observability.SentryDSN, cfg.Observability.Environment, cfg.Observability.Release, cfg.Observability.TracesSampleRate)
 	if err != nil {
 		slog.Error("sentry init", "err", err)
 		os.Exit(1)
@@ -128,15 +128,17 @@ func main() {
 			},
 			Limiter: limiter,
 		},
-		pool,
-		rdb,
-		usersRepo,
-		userChannels,
-		tenantMappings,
-		eventSubs,
-		fan,
-		deduper,
-		reg,
+		api.Deps{
+			Pool:           pool,
+			Redis:          rdb,
+			Users:          usersRepo,
+			UserChannels:   userChannels,
+			TenantMappings: tenantMappings,
+			Subscriptions:  eventSubs,
+			Fanout:         fan,
+			Deduper:        deduper,
+			Registry:       reg,
+		},
 	)
 
 	srv := &http.Server{

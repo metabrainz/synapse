@@ -11,8 +11,8 @@ import (
 // PUT /v1/me/tenants/{tenant_id}/channels/{channel_type}
 
 type assignTenantChannelInput struct {
-	TenantID    string `path:"tenant_id" doc:"Tenant ID"`
-	ChannelType string `path:"channel_type" doc:"Channel type"`
+	TenantID    string      `path:"tenant_id" doc:"Tenant ID"`
+	ChannelType ChannelType `path:"channel_type" doc:"Channel type"`
 	Body        struct {
 		ChannelID int64 `json:"channel_id" doc:"ID of the user channel to assign" minimum:"1"`
 	}
@@ -26,7 +26,7 @@ func (h *meHandler) assignTenantChannel(ctx context.Context, input *assignTenant
 	if !h.reg.HasTenant(input.TenantID) {
 		return nil, huma.Error404NotFound("tenant not found")
 	}
-	if !h.reg.HasChannelType(input.TenantID, input.ChannelType) {
+	if !h.reg.HasChannelType(input.TenantID, string(input.ChannelType)) {
 		return nil, huma.Error400BadRequest("channel_type not supported for this tenant")
 	}
 
@@ -34,7 +34,7 @@ func (h *meHandler) assignTenantChannel(ctx context.Context, input *assignTenant
 	if err != nil {
 		return nil, huma.Error500InternalServerError("assign channel failed")
 	}
-	if ch == nil || ch.UserID != uid || ch.ChannelType != input.ChannelType {
+	if ch == nil || ch.UserID != uid || ch.ChannelType != string(input.ChannelType) {
 		return nil, huma.Error404NotFound("channel not found")
 	}
 	if !ch.IsActive {
@@ -44,7 +44,7 @@ func (h *meHandler) assignTenantChannel(ctx context.Context, input *assignTenant
 	if err := h.tenantMappings.Upsert(ctx, usertenant.Mapping{
 		UserID:        uid,
 		TenantID:      input.TenantID,
-		ChannelType:   input.ChannelType,
+		ChannelType:   string(input.ChannelType),
 		UserChannelID: input.Body.ChannelID,
 		IsEnabled:     true,
 	}); err != nil {
@@ -84,8 +84,8 @@ func (h *meHandler) listTenantChannels(ctx context.Context, input *listTenantCha
 // DELETE /v1/me/tenants/{tenant_id}/channels/{channel_type}
 
 type removeTenantChannelInput struct {
-	TenantID    string `path:"tenant_id" doc:"Tenant ID"`
-	ChannelType string `path:"channel_type" doc:"Channel type to remove"`
+	TenantID    string      `path:"tenant_id" doc:"Tenant ID"`
+	ChannelType ChannelType `path:"channel_type" doc:"Channel type to remove"`
 }
 
 func (h *meHandler) removeTenantChannel(ctx context.Context, input *removeTenantChannelInput) (*struct{}, error) {
@@ -96,7 +96,7 @@ func (h *meHandler) removeTenantChannel(ctx context.Context, input *removeTenant
 	if !h.reg.HasTenant(input.TenantID) {
 		return nil, huma.Error404NotFound("tenant not found")
 	}
-	if err := h.tenantMappings.Delete(ctx, uid, input.TenantID, input.ChannelType); err != nil {
+	if err := h.tenantMappings.Delete(ctx, uid, input.TenantID, string(input.ChannelType)); err != nil {
 		return nil, huma.Error500InternalServerError("remove tenant channel failed")
 	}
 	return nil, nil

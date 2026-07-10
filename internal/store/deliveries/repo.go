@@ -5,10 +5,8 @@ package deliveries
 
 import (
 	"context"
-	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/metabrainz/synapse/internal/store"
 )
 
@@ -131,19 +129,3 @@ func ListByEvent(ctx context.Context, q store.Querier, eventID int64) ([]Deliver
 	return out, rows.Err()
 }
 
-func GetByID(ctx context.Context, q store.Querier, id int64) (*Delivery, error) {
-	var delivery Delivery
-	err := q.QueryRow(ctx,
-		`SELECT id, event_id, user_id, channel_id, channel_type, status, attempt,
-		        max_attempts, last_error, delivered_at, created_at, updated_at
-		 FROM deliveries WHERE id = $1`, id,
-	).Scan(
-		&delivery.ID, &delivery.EventID, &delivery.UserID, &delivery.ChannelID, &delivery.ChannelType, &delivery.Status,
-		&delivery.Attempt, &delivery.MaxAttempts, &delivery.LastError, &delivery.DeliveredAt,
-		&delivery.CreatedAt, &delivery.UpdatedAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	return &delivery, err
-}

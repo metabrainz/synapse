@@ -29,7 +29,6 @@ import (
 // HealthChecks holds optional probe functions for /health/ready.
 type HealthChecks struct {
 	Redis func(ctx context.Context) error
-	AMQP  func(ctx context.Context) error
 }
 
 type Config struct {
@@ -38,27 +37,21 @@ type Config struct {
 	Limiter      *ratelimit.Limiter
 }
 
+// Deps bundles the data-layer dependencies injected into the router.
+type Deps struct {
+	Pool           *pgxpool.Pool
+	Redis          *redis.Client
+	Users          *users.Repo
+	UserChannels   *userchannels.Repo
+	TenantMappings *usertenant.Repo
+	Subscriptions  *usereventsubs.Repo
+	Fanout         *fanout.Fanout
+	Deduper        *dedup.Deduper
+	Registry       *eventtype.Registry
+}
+
 // NewRouter wires all HTTP routes and returns the root handler.
-//
-// Three auth surfaces:
-//
-//	Surface A — tenant API key (static registry): POST /v1/events, GET /v1/events/{id}/deliveries
-//	Surface B — MetaBrainz OAuth token:           /v1/me/**
-//	Internal   — per-adapter secret headers:       /internal/**  (e.g. Telegram webhook)
-//
-// OpenAPI spec is served at /openapi.json; Swagger UI at /docs.
-func NewRouter(
-	cfg Config,
-	pool *pgxpool.Pool,
-	rdb *redis.Client,
-	usersRepo *users.Repo,
-	userChannels *userchannels.Repo,
-	tenantMappings *usertenant.Repo,
-	subscriptions *usereventsubs.Repo,
-	fan *fanout.Fanout,
-	deduper *dedup.Deduper,
-	reg *eventtype.Registry,
-) http.Handler {
+func NewRouter(cfg Config, d Deps) http.Handler {
 	r := chi.NewRouter()
 	r.Use(sentryhttp.New(sentryhttp.Options{Repanic: true}).Handle)
 	r.Use(chimw.Recoverer)
@@ -75,11 +68,11 @@ func NewRouter(
 		})
 	})
 
-	authMW := middleware.NewAuth(reg)
+	authMW := middleware.NewAuth(d.Registry)
 
 	var userMW func(http.Handler) http.Handler
 	if cfg.Introspector != nil {
-		userMW = middleware.NewUserAuth(cfg.Introspector, usersRepo)
+		userMW = middleware.NewUserAuth(cfg.Introspector, d.Users)
 	} else {
 		userMW = func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -133,19 +126,13 @@ func NewRouter(
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
 
-		if err := pool.Ping(ctx); err != nil {
+		if err := d.Pool.Ping(ctx); err != nil {
 			writeError(w, http.StatusServiceUnavailable, "postgres unavailable")
 			return
 		}
 		if cfg.Health.Redis != nil {
 			if err := cfg.Health.Redis(ctx); err != nil {
 				writeError(w, http.StatusServiceUnavailable, "redis unavailable")
-				return
-			}
-		}
-		if cfg.Health.AMQP != nil {
-			if err := cfg.Health.AMQP(ctx); err != nil {
-				writeError(w, http.StatusServiceUnavailable, "rabbitmq unavailable")
 				return
 			}
 		}
@@ -176,13 +163,11 @@ func NewRouter(
 		},
 	}
 
-	registerRoutes(api, pool, fan, deduper, reg, userChannels, tenantMappings, subscriptions)
+	registerRoutes(api, d.Pool, d.Fanout, d.Deduper, d.Registry, d.UserChannels, d.TenantMappings, d.Subscriptions)
 
-	// Internal routes — each adapter mounts its own under /internal/** or /v1/me/**.
-	// Auth is adapter-specific (e.g. Telegram validates X-Telegram-Bot-Api-Secret-Token).
 	for _, ct := range adapter.ChannelTypes() {
 		if rp, ok := adapter.Registry[ct].(adapter.RouteProvider); ok {
-			rp.MountRoutes(r, userMW, rdb, userChannels)
+			rp.MountRoutes(r, userMW, d.Redis, d.UserChannels)
 		}
 	}
 

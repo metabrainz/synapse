@@ -23,9 +23,10 @@ type Config struct {
 
 type ObservabilityConfig struct {
 	// SentryDSN is the Sentry project DSN. Disabled when empty.
-	SentryDSN   string `yaml:"sentry_dsn"`
-	Environment string `yaml:"environment"`
-	Release     string `yaml:"release"`
+	SentryDSN        string  `yaml:"sentry_dsn"`
+	Environment      string  `yaml:"environment"`
+	Release          string  `yaml:"release"`
+	TracesSampleRate float64 `yaml:"traces_sample_rate"`
 }
 
 // TenantConfig holds per-tenant secrets loaded from the environment or config file.

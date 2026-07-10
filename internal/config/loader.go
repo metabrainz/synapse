@@ -34,6 +34,9 @@ func Load(path string) (*Config, error) {
 
 func defaultConfig() Config {
 	return Config{
+		Observability: ObservabilityConfig{
+			TracesSampleRate: 0.1,
+		},
 		HTTP: HTTPConfig{
 			Port:    8080,
 			DBConns: 20,
@@ -102,6 +105,18 @@ func applyEnv(cfg *Config) error {
 		*dst = int32(n)
 		return nil
 	}
+	float64v := func(dst *float64, key string) error {
+		v := os.Getenv(key)
+		if v == "" {
+			return nil
+		}
+		n, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return fmt.Errorf("%s=%q: expected float", key, v)
+		}
+		*dst = n
+		return nil
+	}
 
 	str(&cfg.Postgres.Host, "SYNAPSE_PG_HOST")
 	str(&cfg.Postgres.User, "SYNAPSE_PG_USER")
@@ -162,6 +177,7 @@ func applyEnv(cfg *Config) error {
 		integer(&cfg.Ingest.DrainMs, "SYNAPSE_INGEST_DRAIN_MS"),
 		integer(&cfg.RateLimit.Burst, "SYNAPSE_RATELIMIT_BURST"),
 		integer(&cfg.RateLimit.RatePerSec, "SYNAPSE_RATELIMIT_RATE_PER_SEC"),
+		float64v(&cfg.Observability.TracesSampleRate, "SYNAPSE_OBSERVABILITY_TRACES_SAMPLE_RATE"),
 	); err != nil {
 		return err
 	}

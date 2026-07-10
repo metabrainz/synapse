@@ -23,45 +23,6 @@ type Repo struct{ pool *pgxpool.Pool }
 
 func New(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
 
-// ListActiveForEvent returns active channels that pass Gates 2 and 3 for the given event.
-// Gate 2: user_tenant_channel_mapping.is_enabled (user has assigned and enabled a channel for this tenant)
-// Gate 3: user_event_subscriptions.is_enabled (user has subscribed to this event type on this channel)
-// Gate 1 (tenant channel rules) is applied in the fanout layer via the static registry.
-func (r *Repo) ListActiveForEvent(ctx context.Context, tenantID, userID, eventType string) ([]ActiveChannel, error) {
-	rows, err := r.pool.Query(ctx,
-		`SELECT channel.id, channel.channel_type, channel.config
-		 FROM user_tenant_channel_mapping channel_mapping
-		 JOIN user_channels channel
-		   ON channel.id        = channel_mapping.user_channel_id
-		  AND channel.is_active = TRUE
-		 JOIN user_event_subscriptions event_sub
-		   ON event_sub.user_id      = channel_mapping.user_id
-		  AND event_sub.tenant_id    = channel_mapping.tenant_id
-		  AND event_sub.event_type   = $3
-		  AND event_sub.channel_type = channel_mapping.channel_type
-		 WHERE channel_mapping.user_id   = $1
-		   AND channel_mapping.tenant_id = $2
-		   AND channel_mapping.is_enabled = TRUE
-		   AND event_sub.is_enabled = TRUE`,
-		userID, tenantID, eventType,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []ActiveChannel
-	for rows.Next() {
-		var channel ActiveChannel
-		if err := rows.Scan(&channel.ChannelID, &channel.ChannelType, &channel.Config); err != nil {
-			return nil, err
-		}
-		channel.UserID = userID // the WHERE clause pins user_id = $1
-		out = append(out, channel)
-	}
-	return out, rows.Err()
-}
-
 // ListActiveForRecipients resolves active channels for many recipients in one query.
 // It is the DB fallback for the fanout; production resolves from the in-memory Cache.
 // Like ListActiveForEvent, it matches exact event types only (wildcard '*' subscriptions

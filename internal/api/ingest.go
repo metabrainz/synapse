@@ -25,10 +25,10 @@ type ingestHandler struct {
 }
 
 type ingestRequestBody struct {
-	Recipients     []string        `json:"recipients" doc:"User IDs to deliver this event to" minItems:"1"`
-	EventType      string          `json:"event_type" doc:"Event type identifier registered for this tenant" minLength:"1"`
-	Payload        json.RawMessage `json:"payload,omitempty" doc:"Event-specific payload data"`
-	IdempotencyKey *string         `json:"idempotency_key,omitempty" doc:"Client-supplied deduplication key"`
+	Recipients     []string   `json:"recipients" doc:"User IDs to deliver this event to" minItems:"1"`
+	EventType      string     `json:"event_type" doc:"Tenant-specific event type identifier" minLength:"1"`
+	Payload        JSONObject `json:"payload,omitempty" doc:"Event-specific payload; shape is defined per event type"`
+	IdempotencyKey *string    `json:"idempotency_key,omitempty" doc:"Client-supplied deduplication key"`
 }
 
 type ingestInput struct {
@@ -61,14 +61,14 @@ func (h *ingestHandler) handle(ctx context.Context, input *ingestInput) (*ingest
 	if len(recipients) > ingest.MaxRecipientsPerEvent {
 		return nil, huma.Error400BadRequest(fmt.Sprintf("recipients exceeds max of %d", ingest.MaxRecipientsPerEvent))
 	}
-	if input.Body.Payload == nil {
-		input.Body.Payload = json.RawMessage(`{}`)
+	if len(input.Body.Payload) == 0 {
+		input.Body.Payload = JSONObject(`{}`)
 	}
 
 	if !h.reg.Has(tenant.ID, input.Body.EventType) {
 		return nil, huma.Error400BadRequest("event type not registered for this tenant")
 	}
-	if err := h.reg.Validate(tenant.ID, input.Body.EventType, input.Body.Payload); err != nil {
+	if err := h.reg.Validate(tenant.ID, input.Body.EventType, json.RawMessage(input.Body.Payload)); err != nil {
 		return nil, huma.Error400BadRequest(fmt.Sprintf("payload validation failed: %s", err))
 	}
 
@@ -97,7 +97,7 @@ func (h *ingestHandler) handle(ctx context.Context, input *ingestInput) (*ingest
 			TenantID:       tenant.ID,
 			EventType:      input.Body.EventType,
 			Recipients:     recipients,
-			Payload:        input.Body.Payload,
+			Payload:        json.RawMessage(input.Body.Payload),
 			IdempotencyKey: input.Body.IdempotencyKey,
 		}
 		ev, err := events.Insert(ctx, q, ev)

@@ -22,15 +22,6 @@ type Message struct {
 	CreatedAt  time.Time
 }
 
-// Insert writes an outbox row in the same transaction as event + deliveries.
-func Insert(ctx context.Context, q store.Querier, routingKey string, payload json.RawMessage) error {
-	_, err := q.Exec(ctx,
-		`INSERT INTO outbox (routing_key, payload) VALUES ($1, $2)`,
-		routingKey, payload,
-	)
-	return err
-}
-
 // InsertBatch writes all outbox rows in one round-trip using unnest. Always
 // called inside the same transaction as events.InsertBatch and
 // deliveries.InsertBatch so the three tables are written atomically — a crash

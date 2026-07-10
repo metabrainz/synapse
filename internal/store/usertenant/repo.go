@@ -33,16 +33,6 @@ func (r *Repo) Upsert(ctx context.Context, m Mapping) error {
 	return err
 }
 
-func (r *Repo) SetEnabled(ctx context.Context, userID, tenantID, channelType string, enabled bool) error {
-	_, err := r.pool.Exec(ctx,
-		`UPDATE user_tenant_channel_mapping
-		 SET is_enabled = $4
-		 WHERE user_id = $1 AND tenant_id = $2 AND channel_type = $3`,
-		userID, tenantID, channelType, enabled,
-	)
-	return err
-}
-
 func (r *Repo) Delete(ctx context.Context, userID, tenantID, channelType string) error {
 	_, err := r.pool.Exec(ctx,
 		`DELETE FROM user_tenant_channel_mapping

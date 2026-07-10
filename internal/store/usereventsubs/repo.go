@@ -32,15 +32,6 @@ func (r *Repo) Upsert(ctx context.Context, s Subscription) error {
 	return err
 }
 
-func (r *Repo) SetEnabled(ctx context.Context, userID, tenantID, eventType, channelType string, enabled bool) error {
-	_, err := r.pool.Exec(ctx,
-		`UPDATE user_event_subscriptions SET is_enabled = $5
-		 WHERE user_id = $1 AND tenant_id = $2 AND event_type = $3 AND channel_type = $4`,
-		userID, tenantID, eventType, channelType, enabled,
-	)
-	return err
-}
-
 func (r *Repo) Delete(ctx context.Context, userID, tenantID, eventType, channelType string) error {
 	_, err := r.pool.Exec(ctx,
 		`DELETE FROM user_event_subscriptions

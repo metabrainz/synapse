@@ -92,14 +92,3 @@ func GetIDByIdempotencyKey(ctx context.Context, q store.Querier, tenantID, idemp
 	return id, err
 }
 
-func GetByID(ctx context.Context, q store.Querier, id int64) (*Event, error) {
-	var event Event
-	err := q.QueryRow(ctx,
-		`SELECT id, tenant_id, event_type, payload, idempotency_key, created_at
-		 FROM events WHERE id = $1`, id,
-	).Scan(&event.ID, &event.TenantID, &event.EventType, &event.Payload, &event.IdempotencyKey, &event.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	return &event, err
-}

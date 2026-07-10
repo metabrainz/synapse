@@ -40,9 +40,9 @@ func (h *meHandler) listSubscriptions(ctx context.Context, input *listSubscripti
 // PUT /v1/me/tenants/{tenant_id}/subscriptions/{event_type}/{channel_type}
 
 type subscribeInput struct {
-	TenantID    string `path:"tenant_id" doc:"Tenant ID"`
-	EventType   string `path:"event_type" doc:"Event type to subscribe to"`
-	ChannelType string `path:"channel_type" doc:"Channel type to deliver via"`
+	TenantID    string      `path:"tenant_id" doc:"Tenant ID"`
+	EventType   string      `path:"event_type" doc:"Tenant-specific event type identifier"`
+	ChannelType ChannelType `path:"channel_type" doc:"Channel type to deliver via"`
 }
 
 func (h *meHandler) subscribe(ctx context.Context, input *subscribeInput) (*struct{}, error) {
@@ -53,7 +53,7 @@ func (h *meHandler) subscribe(ctx context.Context, input *subscribeInput) (*stru
 	if !h.reg.HasTenant(input.TenantID) {
 		return nil, huma.Error404NotFound("tenant not found")
 	}
-	if !h.reg.IsAllowed(input.TenantID, input.EventType, input.ChannelType) {
+	if !h.reg.IsAllowed(input.TenantID, input.EventType, string(input.ChannelType)) {
 		return nil, huma.Error400BadRequest("event_type or channel_type not permitted for this tenant")
 	}
 
@@ -61,7 +61,7 @@ func (h *meHandler) subscribe(ctx context.Context, input *subscribeInput) (*stru
 		UserID:      uid,
 		TenantID:    input.TenantID,
 		EventType:   input.EventType,
-		ChannelType: input.ChannelType,
+		ChannelType: string(input.ChannelType),
 		IsEnabled:   true,
 	}); err != nil {
 		return nil, huma.Error500InternalServerError("subscribe failed")
@@ -73,7 +73,7 @@ func (h *meHandler) subscribe(ctx context.Context, input *subscribeInput) (*stru
 	if err == nil {
 		alreadyMapped := false
 		for _, m := range mappings {
-			if m.ChannelType == input.ChannelType {
+			if m.ChannelType == string(input.ChannelType) {
 				alreadyMapped = true
 				break
 			}
@@ -83,7 +83,7 @@ func (h *meHandler) subscribe(ctx context.Context, input *subscribeInput) (*stru
 			if err == nil {
 				var candidates []int64
 				for _, ch := range channels {
-					if ch.ChannelType == input.ChannelType && ch.IsActive {
+					if ch.ChannelType == string(input.ChannelType) && ch.IsActive {
 						candidates = append(candidates, ch.ID)
 					}
 				}
@@ -91,7 +91,7 @@ func (h *meHandler) subscribe(ctx context.Context, input *subscribeInput) (*stru
 					_ = h.tenantMappings.Upsert(ctx, usertenant.Mapping{
 						UserID:        uid,
 						TenantID:      input.TenantID,
-						ChannelType:   input.ChannelType,
+						ChannelType:   string(input.ChannelType),
 						UserChannelID: candidates[0],
 						IsEnabled:     true,
 					})
@@ -106,9 +106,9 @@ func (h *meHandler) subscribe(ctx context.Context, input *subscribeInput) (*stru
 // DELETE /v1/me/tenants/{tenant_id}/subscriptions/{event_type}/{channel_type}
 
 type unsubscribeInput struct {
-	TenantID    string `path:"tenant_id" doc:"Tenant ID"`
-	EventType   string `path:"event_type" doc:"Event type to unsubscribe from"`
-	ChannelType string `path:"channel_type" doc:"Channel type"`
+	TenantID    string      `path:"tenant_id" doc:"Tenant ID"`
+	EventType   string      `path:"event_type" doc:"Event type to unsubscribe from"`
+	ChannelType ChannelType `path:"channel_type" doc:"Channel type"`
 }
 
 func (h *meHandler) unsubscribe(ctx context.Context, input *unsubscribeInput) (*struct{}, error) {
@@ -119,10 +119,10 @@ func (h *meHandler) unsubscribe(ctx context.Context, input *unsubscribeInput) (*
 	if !h.reg.HasTenant(input.TenantID) {
 		return nil, huma.Error404NotFound("tenant not found")
 	}
-	if !h.reg.IsAllowed(input.TenantID, input.EventType, input.ChannelType) {
+	if !h.reg.IsAllowed(input.TenantID, input.EventType, string(input.ChannelType)) {
 		return nil, huma.Error400BadRequest("event_type or channel_type not permitted for this tenant")
 	}
-	if err := h.subscriptions.Delete(ctx, uid, input.TenantID, input.EventType, input.ChannelType); err != nil {
+	if err := h.subscriptions.Delete(ctx, uid, input.TenantID, input.EventType, string(input.ChannelType)); err != nil {
 		return nil, huma.Error500InternalServerError("unsubscribe failed")
 	}
 	return nil, nil

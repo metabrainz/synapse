@@ -86,14 +86,6 @@ func (r *Repo) Delete(ctx context.Context, userID string, id int64) error {
 	return nil
 }
 
-func (r *Repo) MarkInactive(ctx context.Context, id int64) error {
-	_, err := r.pool.Exec(ctx,
-		`UPDATE user_channels SET is_active = FALSE WHERE id = $1`,
-		id,
-	)
-	return err
-}
-
 func (r *Repo) GetByID(ctx context.Context, id int64) (*UserChannel, error) {
 	row := r.pool.QueryRow(ctx,
 		`SELECT id, user_id, channel_type, label, config, is_active, created_at
