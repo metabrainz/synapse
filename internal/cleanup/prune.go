@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var partitionedTables = []string{"events", "deliveries"}
+var partitionedTables = []string{"deliveries"}
 
 // PruneOldEvents deletes events older than age. On partitioned tables,
 // prefer DropOldPartitions instead (O(1), zero vacuum).
