@@ -97,6 +97,7 @@ func (l *Limiter) Middleware(tenantIDFromCtx func(*http.Request) string) func(ht
 			}
 			if !allowed {
 				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Retry-After", "1")
 				w.WriteHeader(http.StatusTooManyRequests)
 				_, _ = w.Write([]byte(`{"error":"rate limit exceeded"}`))
 				return

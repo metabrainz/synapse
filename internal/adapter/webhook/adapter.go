@@ -165,7 +165,7 @@ func (a *Adapter) Deliver(ctx context.Context, msg fanout.WorkerMessage) error {
 	defer resp.Body.Close()
 
 	// Drain body so the connection can be reused by the pool.
-	io.Copy(io.Discard, resp.Body)
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("webhook returned HTTP %d", resp.StatusCode)

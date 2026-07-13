@@ -110,39 +110,57 @@ func (c *Cache) rebuild(ctx context.Context) error {
 }
 
 // listen opens a dedicated raw connection to Postgres (bypassing PgBouncer) and
-// blocks on LISTEN subscription_changes. WaitForNotification is bounded by
+// blocks on LISTEN subscription_changes. Reconnects automatically on connection
+// loss with exponential backoff capped at 30s. WaitForNotification is bounded by
 // rebuildInterval so the cache rebuilds periodically even if no NOTIFY arrives.
 func (c *Cache) listen(ctx context.Context) {
-	conn, err := pgx.Connect(ctx, c.listenDSN)
-	if err != nil {
-		slog.Error("cache listen: connect", "err", err)
-		return
-	}
-	defer conn.Close(ctx)
-
-	if _, err := conn.Exec(ctx, "LISTEN "+listenChannel); err != nil {
-		slog.Error("cache listen: LISTEN failed", "err", err)
-		return
-	}
+	backoff := time.Second
 
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 
-		// Bound the wait so we rebuild periodically even without a notification.
+		err := c.listenOnce(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		slog.Warn("cache listen: connection lost, reconnecting", "err", err, "backoff", backoff)
+
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return
+		}
+		backoff = min(backoff*2, 30*time.Second)
+	}
+}
+
+func (c *Cache) listenOnce(ctx context.Context) error {
+	conn, err := pgx.Connect(ctx, c.listenDSN)
+	if err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+	defer conn.Close(ctx)
+
+	if _, err := conn.Exec(ctx, "LISTEN "+listenChannel); err != nil {
+		return fmt.Errorf("LISTEN: %w", err)
+	}
+
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
 		waitCtx, cancel := context.WithTimeout(ctx, rebuildInterval)
 		_, err := conn.WaitForNotification(waitCtx)
 		cancel()
 
 		if ctx.Err() != nil {
-			return
+			return ctx.Err()
 		}
-		// waitCtx.Err() is non-nil when our own deadline fired (expected periodic tick).
-		// If err is non-nil and waitCtx is still healthy, it's a real connection problem.
 		if err != nil && waitCtx.Err() == nil {
-			slog.Error("cache listen: connection error", "err", err)
-			return
+			return fmt.Errorf("wait: %w", err)
 		}
 		if err := c.rebuild(ctx); err != nil {
 			slog.Error("cache rebuild", "err", err)

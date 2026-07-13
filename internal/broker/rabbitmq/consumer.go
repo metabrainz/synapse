@@ -58,16 +58,49 @@ func (c *Consumer) connect() error {
 	return nil
 }
 
-// Run consumes messages until ctx is cancelled or the connection drops.
-// Prefetch limits how many unacked messages are in-flight at once — no
-// application-level semaphore needed.
+// Run consumes messages until ctx is cancelled. Reconnects automatically on
+// channel/connection close with exponential backoff capped at 30s.
 func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 	queue := "deliveries." + c.channelType
-	msgs, err := c.amqpChannel.Consume(queue, "", false, false, false, false, nil)
-	if err != nil {
-		return fmt.Errorf("consume %s: %w", queue, err)
-	}
+	backoff := time.Second
 
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		msgs, err := c.amqpChannel.Consume(queue, "", false, false, false, false, nil)
+		if err != nil {
+			slog.Error("consumer: consume failed, reconnecting", "queue", queue, "err", err, "backoff", backoff)
+			if !sleep(ctx, backoff) {
+				return ctx.Err()
+			}
+			backoff = min(backoff*2, 30*time.Second)
+			if rerr := c.reconnect(); rerr != nil {
+				slog.Error("consumer: reconnect failed", "queue", queue, "err", rerr)
+				continue
+			}
+			continue
+		}
+		backoff = time.Second
+
+		if err := c.consumeLoop(ctx, queue, msgs, handler); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			slog.Warn("consumer: connection lost, reconnecting", "queue", queue, "err", err, "backoff", backoff)
+			if !sleep(ctx, backoff) {
+				return ctx.Err()
+			}
+			backoff = min(backoff*2, 30*time.Second)
+			if rerr := c.reconnect(); rerr != nil {
+				slog.Error("consumer: reconnect failed", "queue", queue, "err", rerr)
+			}
+		}
+	}
+}
+
+func (c *Consumer) consumeLoop(ctx context.Context, queue string, msgs <-chan amqp.Delivery, handler Handler) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -80,18 +113,27 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 				defer func() {
 					if r := recover(); r != nil {
 						slog.Error("worker: handler panic", "queue", queue, "panic", r)
-						msg.Reject(false) // requeue=false: don't loop on a broken message, send to DLQ
+						msg.Reject(false)
 					}
 				}()
 				if err := handler(ctx, msg.Body); err != nil {
 					slog.Error("worker: handler failed, rejecting to DLQ", "queue", queue, "err", err)
-					msg.Reject(false) // requeue=false: DLX routes this to the dead queue, not back here
+					msg.Reject(false)
 				} else {
-					msg.Ack(false) // ack only this message
+					msg.Ack(false)
 				}
 			}()
 		}
 	}
+}
+
+func (c *Consumer) reconnect() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn != nil {
+		c.conn.Close()
+	}
+	return c.connect()
 }
 
 // PublishRetry sends a message to the retry exchange with a per-message TTL (ms).
@@ -121,11 +163,29 @@ func (c *Consumer) Close() error {
 type BatchHandler func(ctx context.Context, bodies [][]byte) error
 
 // ConsumeBatchQueue collects up to batchSize messages per iteration and
-// processes them together via handler. It blocks waiting for the first message,
-// then drains additional messages for up to drainMs milliseconds before
-// processing — keeping latency low on a quiet queue while maximising batch
-// size under load. Returns when ctx is cancelled or the connection drops.
+// processes them together via handler. Reconnects automatically on connection
+// loss with exponential backoff capped at 30s. Returns only when ctx is cancelled.
 func ConsumeBatchQueue(ctx context.Context, url, queue string, batchSize, drainMs int, handler BatchHandler) error {
+	backoff := time.Second
+
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		err := consumeBatchOnce(ctx, url, queue, batchSize, drainMs, handler)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		slog.Warn("batch consumer: connection lost, reconnecting", "queue", queue, "err", err, "backoff", backoff)
+		if !sleep(ctx, backoff) {
+			return ctx.Err()
+		}
+		backoff = min(backoff*2, 30*time.Second)
+	}
+}
+
+func consumeBatchOnce(ctx context.Context, url, queue string, batchSize, drainMs int, handler BatchHandler) error {
 	conn, err := amqp.Dial(url)
 	if err != nil {
 		return fmt.Errorf("amqp dial: %w", err)
@@ -150,7 +210,6 @@ func ConsumeBatchQueue(ctx context.Context, url, queue string, batchSize, drainM
 	drainDuration := time.Duration(drainMs) * time.Millisecond
 
 	for {
-		// Block until the first message arrives or ctx is cancelled.
 		var first amqp.Delivery
 		select {
 		case <-ctx.Done():
@@ -165,7 +224,6 @@ func ConsumeBatchQueue(ctx context.Context, url, queue string, batchSize, drainM
 		batch := []amqp.Delivery{first}
 		timer := time.NewTimer(drainDuration)
 
-		// Collect messages until the batch is full or the drain duration expires or the context is cancelled.
 	collect:
 		for len(batch) < batchSize {
 			select {
@@ -201,5 +259,17 @@ func ConsumeBatchQueue(ctx context.Context, url, queue string, batchSize, drainM
 				delivery.Ack(false)
 			}
 		}
+	}
+}
+
+// sleep returns false if ctx was cancelled before duration elapsed.
+func sleep(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }
