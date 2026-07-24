@@ -13,7 +13,7 @@ type recordingRecommendationEvent struct{}
 
 func (recordingRecommendationEvent) EventName() string { return "recording_recommendation" }
 func (recordingRecommendationEvent) AllowedChannels() []string {
-	return []string{eventspec.ChannelWebhook, eventspec.ChannelTelegram}
+	return []string{eventspec.ChannelWebhook, eventspec.ChannelTelegram, eventspec.ChannelEmail}
 }
 func (recordingRecommendationEvent) SchemaVersion() string { return "1" }
 func (recordingRecommendationEvent) Schema() []byte        { return recordingRecommendationSchema }

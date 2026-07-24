@@ -82,6 +82,48 @@ func TestTransformFollow(t *testing.T) {
 	}
 }
 
+func TestTransformRecordingRecommendation(t *testing.T) {
+	payload := json.RawMessage(`{
+		"actor": {"username": "rob", "url": "https://listenbrainz.org/user/rob"},
+		"recording": {
+			"track_name": "Bohemian Rhapsody",
+			"artist_name": "Queen",
+			"url": "https://listenbrainz.org/recording/xyz",
+			"album_art_url": "https://example.com/cover.jpg"
+		}
+	}`)
+
+	templateID, params, err := transformRecordingRecommendation(payload, transformContext{
+		ToName:                  "Ansh",
+		NotificationSettingsURL: "https://listenbrainz.org/settings/notifications",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if templateID != "recording-recommendation" {
+		t.Fatalf("templateID = %q", templateID)
+	}
+
+	var got map[string]string
+	if err := json.Unmarshal(params, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"to_name":                   "Ansh",
+		"from_name":                 "rob",
+		"track_name":                "Bohemian Rhapsody",
+		"track_artist":              "Queen",
+		"track_url":                 "https://listenbrainz.org/recording/xyz",
+		"album_art_url":             "https://example.com/cover.jpg",
+		"notification_settings_url": "https://listenbrainz.org/settings/notifications",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("params[%q] = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
 func TestTransformRecordingPin(t *testing.T) {
 	payload := json.RawMessage(`{
 		"actor": {"username": "rob", "url": "https://listenbrainz.org/user/rob"},

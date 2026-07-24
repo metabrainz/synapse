@@ -21,6 +21,8 @@ func transformPayload(eventType string, payload json.RawMessage, ctx transformCo
 		return transformFollow(payload, ctx)
 	case "recording_pin":
 		return transformRecordingPin(payload, ctx)
+	case "recording_recommendation":
+		return transformRecordingRecommendation(payload, ctx)
 	case "cb_review":
 		return transformCbReview(payload, ctx)
 	case "thanks":
@@ -108,6 +110,34 @@ func transformRecordingPin(payload json.RawMessage, ctx transformContext) (strin
 		"notification_settings_url": ctx.NotificationSettingsURL,
 	})
 	return "recording-pin", out, nil
+}
+
+func transformRecordingRecommendation(payload json.RawMessage, ctx transformContext) (string, json.RawMessage, error) {
+	var ev struct {
+		Actor struct {
+			Username string `json:"username"`
+		} `json:"actor"`
+		Recording struct {
+			TrackName   string `json:"track_name"`
+			ArtistName  string `json:"artist_name"`
+			URL         string `json:"url"`
+			AlbumArtURL string `json:"album_art_url"`
+		} `json:"recording"`
+	}
+	if err := json.Unmarshal(payload, &ev); err != nil {
+		return "", nil, fmt.Errorf("unmarshal payload: %w", err)
+	}
+
+	out, _ := json.Marshal(map[string]string{
+		"to_name":                   ctx.ToName,
+		"from_name":                 ev.Actor.Username,
+		"track_name":                ev.Recording.TrackName,
+		"track_artist":              ev.Recording.ArtistName,
+		"track_url":                 ev.Recording.URL,
+		"album_art_url":             ev.Recording.AlbumArtURL,
+		"notification_settings_url": ctx.NotificationSettingsURL,
+	})
+	return "recording-recommendation", out, nil
 }
 
 func transformCbReview(payload json.RawMessage, ctx transformContext) (string, json.RawMessage, error) {
