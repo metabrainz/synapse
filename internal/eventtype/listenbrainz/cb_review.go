@@ -13,7 +13,7 @@ type cbReviewEvent struct{}
 
 func (cbReviewEvent) EventName() string { return "cb_review" }
 func (cbReviewEvent) AllowedChannels() []string {
-	return []string{eventspec.ChannelWebhook, eventspec.ChannelTelegram}
+	return []string{eventspec.ChannelWebhook, eventspec.ChannelTelegram, eventspec.ChannelEmail}
 }
 func (cbReviewEvent) SchemaVersion() string { return "1" }
 func (cbReviewEvent) Schema() []byte        { return cbReviewSchema }

@@ -36,6 +36,7 @@ type WorkerMessage struct {
 	EventType     string          `json:"event_type"`
 	TenantID      string          `json:"tenant_id"`
 	UserID        string          `json:"user_id"`
+	Username      string          `json:"username"`
 	Payload       json.RawMessage `json:"payload"`
 	Attempt       int             `json:"attempt"`
 	MaxAttempts   int             `json:"max_attempts"`
@@ -53,6 +54,7 @@ func newWorkerMessage(deliveryID int64, ev events.Event, ch subscriptions.Active
 		EventType:     ev.EventType,
 		TenantID:      ev.TenantID,
 		UserID:        ch.UserID,
+		Username:      ch.Username,
 		Payload:       ev.Payload,
 		Attempt:       0,
 		MaxAttempts:   maxAttempts,

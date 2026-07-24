@@ -46,12 +46,34 @@ func main() {
 	}
 	defer pool.Close()
 
+	reg := eventtype.NewRegistry(eventtype.KnownTenants)
+
+	tenantFrom := make(map[string]string, len(cfg.Tenants))
+	tenantNotifyURL := make(map[string]string, len(cfg.Tenants))
+	for id, tc := range cfg.Tenants {
+		if tc.EmailFrom != "" {
+			tenantFrom[id] = tc.EmailFrom
+		}
+		if tc.NotificationSettingsURL != "" {
+			tenantNotifyURL[id] = tc.NotificationSettingsURL
+		}
+	}
+
+	if err := adapter.Build(ctx, adapter.Options{
+		MailService: adapter.MailServiceOptions{
+			URL:                           cfg.MailService.URL,
+			TenantFrom:                    tenantFrom,
+			TenantNotificationSettingsURL: tenantNotifyURL,
+		},
+	}); err != nil {
+		slog.Error("adapter: startup failed", "err", err)
+		os.Exit(1)
+	}
+
 	if err := rabbitmq.Setup(cfg.RabbitMQ.URL, adapter.ChannelTypes()); err != nil {
 		slog.Error("rabbitmq topology", "err", err)
 		os.Exit(1)
 	}
-
-	reg := eventtype.NewRegistry(eventtype.KnownTenants)
 
 	subRepo := subscriptions.New(pool)
 	cache := fanout.NewCache(pool, subRepo, cfg.Postgres.DirectDSN, reg)

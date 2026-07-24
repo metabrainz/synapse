@@ -41,6 +41,10 @@ telegram:
   webhook_url: "{{ template "OPTKEY" "telegram_webhook_url" }}"
   webhook_secret: "{{ template "OPTKEY" "telegram_webhook_secret" }}"
 
+{{ $mailsvc := service "mb-mail-service" -}}
+mail_service:
+  url: "{{ if $mailsvc }}http://{{ with index $mailsvc 0 }}{{ .Address }}:{{ .Port }}{{ end }}{{ end }}"
+
 relay:
   outbox_poll_ms: 100
   workers: 4
@@ -60,6 +64,9 @@ worker:
     telegram:
       concurrency: 5
       prefetch: 5
+    email:
+      concurrency: 10
+      prefetch: 10
 
 rate_limit:
   burst: 100
@@ -73,3 +80,5 @@ observability:
 tenants:
   listenbrainz:
     api_key: "{{ template "KEY" "tenants_listenbrainz_api_key" }}"
+    email_from: "{{ template "OPTKEY" "tenants_listenbrainz_email_from" }}"
+    notification_settings_url: "{{ template "OPTKEY" "tenants_listenbrainz_notification_settings_url" }}"

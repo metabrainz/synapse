@@ -13,7 +13,7 @@ type followEvent struct{}
 
 func (followEvent) EventName() string { return "follow" }
 func (followEvent) AllowedChannels() []string {
-	return []string{eventspec.ChannelWebhook, eventspec.ChannelTelegram}
+	return []string{eventspec.ChannelWebhook, eventspec.ChannelTelegram, eventspec.ChannelEmail}
 }
 func (followEvent) SchemaVersion() string { return "1" }
 func (followEvent) Schema() []byte        { return followSchema }

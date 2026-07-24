@@ -13,7 +13,7 @@ type thanksEvent struct{}
 
 func (thanksEvent) EventName() string { return "thanks" }
 func (thanksEvent) AllowedChannels() []string {
-	return []string{eventspec.ChannelWebhook, eventspec.ChannelTelegram}
+	return []string{eventspec.ChannelWebhook, eventspec.ChannelTelegram, eventspec.ChannelEmail}
 }
 func (thanksEvent) SchemaVersion() string { return "1" }
 func (thanksEvent) Schema() []byte        { return thanksSchema }

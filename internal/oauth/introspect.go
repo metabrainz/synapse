@@ -24,8 +24,8 @@ const defaultTokenTTL = 15 * time.Minute
 
 // Claims holds the validated identity extracted from a MetaBrainz OAuth token.
 type Claims struct {
-	// ID is the numeric MetaBrainz user ID
-	ID string
+	ID       string
+	Username string
 }
 
 // Introspector validates a Bearer token and returns the caller's identity.
@@ -75,7 +75,12 @@ func (m *MBIntrospector) Introspect(ctx context.Context, token string) (Claims, 
 			if cached == "" {
 				return Claims{}, ErrInactive
 			}
-			return Claims{ID: cached}, nil
+			parts := strings.SplitN(cached, ":", 2)
+			c := Claims{ID: parts[0]}
+			if len(parts) == 2 {
+				c.Username = parts[1]
+			}
+			return c, nil
 		} else if !errors.Is(err, redis.Nil) {
 			slog.Warn("oauth: redis cache read failed, falling through to introspection", "err", err)
 		}
@@ -121,7 +126,10 @@ func (m *MBIntrospector) Introspect(ctx context.Context, token string) (Claims, 
 		return Claims{}, ErrInactive
 	}
 
-	claims := Claims{ID: strconv.FormatInt(ir.MetaBrainzUserID, 10)}
+	claims := Claims{
+		ID:       strconv.FormatInt(ir.MetaBrainzUserID, 10),
+		Username: ir.Sub,
+	}
 
 	if m.rdb != nil {
 		var ttl time.Duration
@@ -131,7 +139,7 @@ func (m *MBIntrospector) Introspect(ctx context.Context, token string) (Claims, 
 			ttl = defaultTokenTTL
 		}
 		if ttl > 0 {
-			if err := m.rdb.Set(ctx, cacheKey(token), claims.ID, ttl).Err(); err != nil {
+			if err := m.rdb.Set(ctx, cacheKey(token), claims.ID+":"+claims.Username, ttl).Err(); err != nil {
 				slog.Warn("oauth: redis cache write failed", "err", err)
 			}
 		}

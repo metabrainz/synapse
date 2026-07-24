@@ -22,7 +22,7 @@ func (s *stubIntrospector) Introspect(_ context.Context, _ string) (oauth.Claims
 
 type stubUserRepo struct{ upsertErr error }
 
-func (s *stubUserRepo) Upsert(_ context.Context, _ string) error { return s.upsertErr }
+func (s *stubUserRepo) Upsert(_ context.Context, _, _ string) error { return s.upsertErr }
 
 func TestNewUserAuth_ValidToken(t *testing.T) {
 	mw := middleware.NewUserAuth(&stubIntrospector{claims: oauth.Claims{ID: "42"}}, &stubUserRepo{})

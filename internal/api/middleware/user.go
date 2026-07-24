@@ -16,7 +16,7 @@ type userContextKey struct{}
 // UserRepo is the minimal interface the user auth middleware needs.
 // Implemented by *users.Repo
 type UserRepo interface {
-	Upsert(ctx context.Context, id string) error
+	Upsert(ctx context.Context, id, username string) error
 }
 
 // writeJSONError writes a JSON error response with the correct Content-Type.
@@ -51,7 +51,7 @@ func NewUserAuth(i oauth.Introspector, repo UserRepo) func(http.Handler) http.Ha
 				return
 			}
 
-			if err := repo.Upsert(r.Context(), claims.ID); err != nil {
+			if err := repo.Upsert(r.Context(), claims.ID, claims.Username); err != nil {
 				slog.Error("user oauth: upsert failed", "err", err)
 				writeJSONError(w, http.StatusServiceUnavailable, "service unavailable")
 				return

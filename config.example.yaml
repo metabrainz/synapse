@@ -41,6 +41,9 @@ telegram:
   webhook_url: ""      # e.g. https://your-domain.com/internal/telegram/webhook — Telegram calls this
   webhook_secret: ""   # random string; sent as X-Telegram-Bot-Api-Secret-Token
 
+mail_service:
+  url: ""              # e.g. http://localhost:3000; leave empty to disable
+
 worker:
   db_pool: 15
   channels:
@@ -50,6 +53,9 @@ worker:
     telegram:
       concurrency: 5
       prefetch: 5
+    email:
+      concurrency: 10
+      prefetch: 10
 
 rate_limit:
   burst: 100
@@ -63,3 +69,5 @@ observability:
 tenants:
   listenbrainz:
     api_key: ""
+    email_from: "noreply@listenbrainz.org"
+    notification_settings_url: "https://listenbrainz.org/settings/notifications"

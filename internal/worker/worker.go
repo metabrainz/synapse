@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -65,6 +66,13 @@ func Handler(
 
 		errStr := deliveryErr.Error()
 		nextAttempt := msg.Attempt + 1
+
+		// Check if the error is permanent.
+		var pe interface{ Permanent() bool }
+		if errors.As(deliveryErr, &pe) && pe.Permanent() {
+			nextAttempt = msg.MaxAttempts
+		}
+
 		slog.Warn("worker: delivery failed", "delivery_id", msg.DeliveryID, "attempt", msg.Attempt, "err", deliveryErr)
 
 		if nextAttempt >= msg.MaxAttempts {

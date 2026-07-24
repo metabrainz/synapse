@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/metabrainz/synapse/internal/adapter/email"
 	"github.com/metabrainz/synapse/internal/adapter/telegram"
 	"github.com/metabrainz/synapse/internal/adapter/webhook"
 )
@@ -15,6 +16,7 @@ type ChannelType string
 const (
 	Webhook  ChannelType = "webhook"
 	Telegram ChannelType = "telegram"
+	Email    ChannelType = "email"
 )
 
 // Registry maps channel type names to their adapter implementations.
@@ -27,6 +29,14 @@ var Registry map[ChannelType]Adapter
 func Build(ctx context.Context, opts Options) error {
 	Registry = map[ChannelType]Adapter{
 		Webhook: webhook.New(opts.Webhook.AllowPrivateURLs),
+	}
+
+	if opts.MailService.URL != "" {
+		Registry[Email] = email.New(
+			opts.MailService.URL,
+			opts.MailService.TenantFrom,
+			opts.MailService.TenantNotificationSettingsURL,
+		)
 	}
 
 	if opts.Telegram.BotToken != "" {

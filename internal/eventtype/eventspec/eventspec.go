@@ -20,4 +20,5 @@ type TelegramRenderer interface {
 const (
 	ChannelWebhook  = "webhook"
 	ChannelTelegram = "telegram"
+	ChannelEmail    = "email"
 )

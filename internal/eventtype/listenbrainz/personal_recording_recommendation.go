@@ -15,7 +15,7 @@ func (personalRecordingRecommendationEvent) EventName() string {
 	return "personal_recording_recommendation"
 }
 func (personalRecordingRecommendationEvent) AllowedChannels() []string {
-	return []string{eventspec.ChannelWebhook, eventspec.ChannelTelegram}
+	return []string{eventspec.ChannelWebhook, eventspec.ChannelTelegram, eventspec.ChannelEmail}
 }
 func (personalRecordingRecommendationEvent) SchemaVersion() string { return "1" }
 func (personalRecordingRecommendationEvent) Schema() []byte {

@@ -55,9 +55,25 @@ func main() {
 
 	reg := eventtype.NewRegistry(eventtype.KnownTenants)
 
+	tenantFrom := make(map[string]string, len(cfg.Tenants))
+	tenantNotifyURL := make(map[string]string, len(cfg.Tenants))
+	for id, tc := range cfg.Tenants {
+		if tc.EmailFrom != "" {
+			tenantFrom[id] = tc.EmailFrom
+		}
+		if tc.NotificationSettingsURL != "" {
+			tenantNotifyURL[id] = tc.NotificationSettingsURL
+		}
+	}
+
 	if err := adapter.Build(ctx, adapter.Options{
 		Telegram: adapter.TelegramOptions{
 			BotToken: cfg.Telegram.BotToken,
+		},
+		MailService: adapter.MailServiceOptions{
+			URL:                           cfg.MailService.URL,
+			TenantFrom:                    tenantFrom,
+			TenantNotificationSettingsURL: tenantNotifyURL,
 		},
 		Redis:    rdb,
 		Registry: reg,

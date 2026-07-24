@@ -4,6 +4,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE users (
     id         TEXT        PRIMARY KEY,
+    username   TEXT        NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

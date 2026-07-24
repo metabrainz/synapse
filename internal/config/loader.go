@@ -131,6 +131,7 @@ func applyEnv(cfg *Config) error {
 	str(&cfg.Telegram.BotToken, "SYNAPSE_TELEGRAM_BOT_TOKEN")
 	str(&cfg.Telegram.WebhookURL, "SYNAPSE_TELEGRAM_WEBHOOK_URL")
 	str(&cfg.Telegram.WebhookSecret, "SYNAPSE_TELEGRAM_WEBHOOK_SECRET")
+	str(&cfg.MailService.URL, "SYNAPSE_MAIL_SERVICE_URL")
 	str(&cfg.Observability.SentryDSN, "SYNAPSE_OBSERVABILITY_SENTRY_DSN")
 	str(&cfg.Observability.Environment, "SYNAPSE_OBSERVABILITY_ENVIRONMENT")
 	str(&cfg.Observability.Release, "SYNAPSE_OBSERVABILITY_RELEASE")

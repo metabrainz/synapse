@@ -13,7 +13,7 @@ type notificationEvent struct{}
 
 func (notificationEvent) EventName() string { return "notification" }
 func (notificationEvent) AllowedChannels() []string {
-	return []string{eventspec.ChannelWebhook, eventspec.ChannelTelegram}
+	return []string{eventspec.ChannelWebhook, eventspec.ChannelTelegram, eventspec.ChannelEmail}
 }
 func (notificationEvent) SchemaVersion() string { return "1" }
 func (notificationEvent) Schema() []byte        { return notificationSchema }

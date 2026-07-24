@@ -89,6 +89,17 @@ func main() {
 	}
 	reg := eventtype.NewRegistry(tenants)
 
+	tenantFrom := make(map[string]string, len(cfg.Tenants))
+	tenantNotifyURL := make(map[string]string, len(cfg.Tenants))
+	for id, tc := range cfg.Tenants {
+		if tc.EmailFrom != "" {
+			tenantFrom[id] = tc.EmailFrom
+		}
+		if tc.NotificationSettingsURL != "" {
+			tenantNotifyURL[id] = tc.NotificationSettingsURL
+		}
+	}
+
 	if err := adapter.Build(ctx, adapter.Options{
 		Webhook: adapter.WebhookOptions{
 			AllowPrivateURLs: cfg.Webhook.AllowPrivateURLs,
@@ -97,6 +108,11 @@ func main() {
 			BotToken:      cfg.Telegram.BotToken,
 			WebhookURL:    cfg.Telegram.WebhookURL,
 			WebhookSecret: cfg.Telegram.WebhookSecret,
+		},
+		MailService: adapter.MailServiceOptions{
+			URL:                           cfg.MailService.URL,
+			TenantFrom:                    tenantFrom,
+			TenantNotificationSettingsURL: tenantNotifyURL,
 		},
 		Redis:    rdb,
 		Registry: reg,

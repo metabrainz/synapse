@@ -17,6 +17,7 @@ type Config struct {
 	OAuth         OAuthConfig             `yaml:"oauth"`
 	Webhook       WebhookConfig           `yaml:"webhook"`
 	Telegram      TelegramConfig          `yaml:"telegram"`
+	MailService   MailServiceConfig       `yaml:"mail_service"`
 	Observability ObservabilityConfig     `yaml:"observability"`
 	Tenants       map[string]TenantConfig `yaml:"tenants"`
 }
@@ -31,7 +32,10 @@ type ObservabilityConfig struct {
 
 // TenantConfig holds per-tenant secrets loaded from the environment or config file.
 type TenantConfig struct {
-	APIKey string `yaml:"api_key"`
+	APIKey    string `yaml:"api_key"`
+	EmailFrom string `yaml:"email_from"`
+	// NotificationSettingsURL is linked from email templates (e.g. manage notifications).
+	NotificationSettingsURL string `yaml:"notification_settings_url"`
 }
 
 type OAuthConfig struct {
@@ -50,6 +54,12 @@ type TelegramConfig struct {
 	BotToken      string `yaml:"bot_token"`
 	WebhookURL    string `yaml:"webhook_url"`
 	WebhookSecret string `yaml:"webhook_secret"`
+}
+
+// MailServiceConfig holds connection settings for the mb-mail-service HTTP API.
+// When URL is empty, the email adapter is not registered.
+type MailServiceConfig struct {
+	URL string `yaml:"url"`
 }
 
 type PostgresConfig struct {

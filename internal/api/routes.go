@@ -96,6 +96,15 @@ func registerRoutes(
 
 	// Catalog — read-only view of what a tenant exposes.
 	huma.Register(api, huma.Operation{
+		OperationID: "list-channel-types",
+		Method:      http.MethodGet,
+		Path:        "/v1/me/channel-types",
+		Summary:     "List notification channel types enabled on this Synapse instance",
+		Tags:        []string{"catalog"},
+		Security:    surfaceBSec,
+	}, me.listChannelTypes)
+
+	huma.Register(api, huma.Operation{
 		OperationID: "list-tenant-event-types",
 		Method:      http.MethodGet,
 		Path:        "/v1/me/tenants/{tenant_id}/event-types",

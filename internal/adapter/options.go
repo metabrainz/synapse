@@ -20,11 +20,20 @@ type WebhookOptions struct {
 	AllowPrivateURLs bool
 }
 
+// MailServiceOptions configures the email adapter.
+// When URL is empty, Build skips registration.
+type MailServiceOptions struct {
+	URL                           string
+	TenantFrom                    map[string]string
+	TenantNotificationSettingsURL map[string]string
+}
+
 // Options holds per-adapter configuration passed to Build.
 type Options struct {
-	Webhook  WebhookOptions
-	Telegram TelegramOptions
-	Redis    *redis.Client
+	Webhook     WebhookOptions
+	Telegram    TelegramOptions
+	MailService MailServiceOptions
+	Redis       *redis.Client
 	// Registry supplies event templates to the Telegram adapter.
 	Registry *eventtype.Registry
 }
