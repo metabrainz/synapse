@@ -58,6 +58,9 @@
         },
         "url": {
           "type": "string"
+        },
+        "album_art_url": {
+          "type": "string"
         }
       },
       "additionalProperties": false
