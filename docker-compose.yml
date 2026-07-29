@@ -65,7 +65,7 @@ services:
       SYNAPSE_TENANTS_LISTENBRAINZ_API_KEY: local-dev-key
       SYNAPSE_OAUTH_CLIENT_ID: ""
       SYNAPSE_OAUTH_CLIENT_SECRET: ""
-      SYNAPSE_OAUTH_INTROSPECTION_URL: "https://musicbrainz.org/oauth2/introspect"
+      SYNAPSE_OAUTH_INTROSPECTION_URL: "https://metabrainz.org/oauth2/introspect"
     ports:
       - "8080:8080"
     depends_on:

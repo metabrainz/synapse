@@ -18,7 +18,7 @@ redis:
 oauth:
   client_id: ""
   client_secret: ""
-  introspection_url: "https://musicbrainz.org/new-oauth2/introspect"
+  introspection_url: "https://metabrainz.org/oauth2/introspect"
 
 rabbitmq:
   url: amqp://guest:guest@localhost:5672/

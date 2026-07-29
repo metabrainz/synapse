@@ -27,11 +27,11 @@ func TestMBIntrospector_ValidToken(t *testing.T) {
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]any{
-			"active":             true,
-			"sub":                "testuser",
-			"expires_at":         time.Now().Add(time.Hour).Unix(),
-			"scope":              "profile",
-			"metabrainz_user_id": int64(42),
+			"active":     true,
+			"sub":        "42",
+			"username":   "testuser",
+			"expires_at": time.Now().Add(time.Hour).Unix(),
+			"scope":      []string{"profile"},
 		})
 	}))
 	defer ts.Close()
@@ -43,6 +43,9 @@ func TestMBIntrospector_ValidToken(t *testing.T) {
 	}
 	if claims.ID != "42" {
 		t.Fatalf("want id=42, got %q", claims.ID)
+	}
+	if claims.Username != "testuser" {
+		t.Fatalf("want username=testuser, got %q", claims.Username)
 	}
 }
 
@@ -75,10 +78,10 @@ func TestMBIntrospector_ServerError(t *testing.T) {
 func TestMBIntrospector_ExpiredToken(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
-			"active":             true,
-			"sub":                "testuser",
-			"expires_at":         time.Now().Add(-time.Hour).Unix(), // already expired
-			"metabrainz_user_id": int64(42),
+			"active":     true,
+			"sub":        "42",
+			"username":   "testuser",
+			"expires_at": time.Now().Add(-time.Hour).Unix(), // already expired
 		})
 	}))
 	defer ts.Close()
@@ -87,5 +90,23 @@ func TestMBIntrospector_ExpiredToken(t *testing.T) {
 	_, err := i.Introspect(context.Background(), "expired-token")
 	if !errors.Is(err, oauth.ErrInactive) {
 		t.Fatalf("want ErrInactive for expired token, got %v", err)
+	}
+}
+
+func TestMBIntrospector_ClientCredentialsToken(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"active":     true,
+			"sub":        "-1",
+			"expires_at": time.Now().Add(time.Hour).Unix(),
+			"scope":      []string{"profile"},
+		})
+	}))
+	defer ts.Close()
+
+	i := oauth.NewMBIntrospector("client-id", "client-secret", ts.URL, nil)
+	_, err := i.Introspect(context.Background(), "cc-token")
+	if !errors.Is(err, oauth.ErrInactive) {
+		t.Fatalf("want ErrInactive for client-credentials token, got %v", err)
 	}
 }

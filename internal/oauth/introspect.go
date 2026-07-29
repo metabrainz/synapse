@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -34,13 +33,13 @@ type Introspector interface {
 }
 
 type introspectResponse struct {
-	Active           bool   `json:"active"`
-	Sub              string `json:"sub"`
-	ExpiresAt        int64  `json:"expires_at"`
-	MetaBrainzUserID int64  `json:"metabrainz_user_id"`
+	Active    bool   `json:"active"`
+	Sub       string `json:"sub"`
+	Username  string `json:"username"`
+	ExpiresAt int64  `json:"expires_at"`
 }
 
-// MBIntrospector calls the MusicBrainz OAuth2 introspection endpoint.
+// MBIntrospector calls the MetaBrainz OAuth2 introspection endpoint.
 type MBIntrospector struct {
 	clientID     string
 	clientSecret string
@@ -65,10 +64,9 @@ func cacheKey(token string) string {
 	return "oauth:token:" + hex.EncodeToString(h[:])
 }
 
-// Introspect validates the given token against the MusicBrainz introspection endpoint.
+// Introspect validates the given token against the MetaBrainz introspection endpoint.
 // It returns the caller's Claims on success, ErrInactive if the token is not valid,
-// or a wrapped error for network/protocol failures. Client-credentials tokens (no
-// associated user) are treated as inactive.
+// or a wrapped error for network/protocol failures.
 func (m *MBIntrospector) Introspect(ctx context.Context, token string) (Claims, error) {
 	if m.rdb != nil {
 		if cached, err := m.rdb.Get(ctx, cacheKey(token)).Result(); err == nil {
@@ -116,8 +114,9 @@ func (m *MBIntrospector) Introspect(ctx context.Context, token string) (Claims, 
 		return Claims{}, fmt.Errorf("oauth: decode introspect response: %w", err)
 	}
 
-	// Client-credentials tokens have no user_id, so reject for user-facing endpoints.
-	if !ir.Active || (ir.ExpiresAt > 0 && time.Now().Unix() > ir.ExpiresAt) || ir.MetaBrainzUserID == 0 {
+	// sub="-1" = client-credentials grant (no user); reject for /v1/me.
+	if !ir.Active || (ir.ExpiresAt > 0 && time.Now().Unix() > ir.ExpiresAt) ||
+		ir.Sub == "" || ir.Sub == "-1" {
 		if m.rdb != nil {
 			if err := m.rdb.Set(ctx, cacheKey(token), "", 30*time.Second).Err(); err != nil {
 				slog.Warn("oauth: redis cache write failed", "err", err)
@@ -127,8 +126,8 @@ func (m *MBIntrospector) Introspect(ctx context.Context, token string) (Claims, 
 	}
 
 	claims := Claims{
-		ID:       strconv.FormatInt(ir.MetaBrainzUserID, 10),
-		Username: ir.Sub,
+		ID:       ir.Sub,
+		Username: ir.Username,
 	}
 
 	if m.rdb != nil {
