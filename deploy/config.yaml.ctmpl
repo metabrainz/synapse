@@ -34,7 +34,7 @@ rabbitmq:
 oauth:
   client_id: "{{ template "KEY" "oauth_client_id" }}"
   client_secret: "{{ template "KEY" "oauth_client_secret" }}"
-  introspection_url: "https://metabrainz.org/oauth2/introspect"
+  introspection_url: "{{ template "KEY" "oauth_introspection_url" }}"
 
 telegram:
   bot_token: "{{ template "OPTKEY" "telegram_bot_token" }}"
