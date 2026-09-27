@@ -41,7 +41,7 @@ telegram:
   webhook_url: "{{ template "OPTKEY" "telegram_webhook_url" }}"
   webhook_secret: "{{ template "OPTKEY" "telegram_webhook_secret" }}"
 
-{{ $mailsvc := service "mb-mail-service" -}}
+{{ $mailsvc := service (printf "%s.virtual-mb-mail-service" (env "DEPLOY_ENV")) -}}
 mail_service:
   url: "{{ if $mailsvc }}http://{{ with index $mailsvc 0 }}{{ .Address }}:{{ .Port }}{{ end }}{{ end }}"
 
