@@ -204,3 +204,30 @@ func TestCleanupKeepsEventsThatStillHaveDependents(t *testing.T) {
 		}
 	})
 }
+
+func TestCleanupKeepsPartitionsWithUnfinishedDeliveries(t *testing.T) {
+	e := setup(t)
+	e.mustExec(`CREATE TABLE deliveries_2020_01 PARTITION OF deliveries FOR VALUES FROM ('2020-01-01') TO ('2020-02-01')`)
+	e.mustExec(`INSERT INTO deliveries (event_id, user_id, channel_id, channel_type, status, created_at)
+		VALUES (1, 'u', 1, 'webhook', 'RETRYING', '2020-01-15')`)
+	exists := func() bool {
+		var ok bool
+		e.pool.QueryRow(e.ctx, `SELECT to_regclass('deliveries_2020_01') IS NOT NULL`).Scan(&ok)
+		return ok
+	}
+
+	if err := cleanup.DropOldPartitions(e.ctx, e.pool, 90*24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if !exists() {
+		t.Fatal("partition dropped while it holds a RETRYING delivery")
+	}
+
+	e.mustExec(`UPDATE deliveries SET status = 'DEAD' WHERE created_at = '2020-01-15'`)
+	if err := cleanup.DropOldPartitions(e.ctx, e.pool, 90*24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if exists() {
+		t.Fatal("old partition kept after its deliveries became terminal")
+	}
+}

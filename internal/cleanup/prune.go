@@ -73,6 +73,19 @@ func DropOldPartitions(ctx context.Context, pool *pgxpool.Pool, age time.Duratio
 		rows.Close()
 
 		for _, partName := range toDrop {
+			// Nothing is inserted into an old partition and a terminal delivery never
+			// becomes non-terminal again, so checking before dropping is not racy.
+			var unfinished bool
+			if err := pool.QueryRow(ctx, fmt.Sprintf(
+				`SELECT EXISTS(SELECT 1 FROM %s WHERE status IN ('PENDING', 'RETRYING'))`, partName,
+			)).Scan(&unfinished); err != nil {
+				slog.Error("cleanup: check partition", "partition", partName, "err", err)
+				continue
+			}
+			if unfinished {
+				slog.Warn("cleanup: keeping old partition with unfinished deliveries", "partition", partName)
+				continue
+			}
 			if _, err := pool.Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s", partName)); err != nil {
 				slog.Error("cleanup: drop partition", "partition", partName, "err", err)
 			} else {
