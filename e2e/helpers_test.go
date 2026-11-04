@@ -127,7 +127,8 @@ func setup(t *testing.T) *env {
 		t.Fatalf("adapter.Build: %v", err)
 	}
 
-	fan := fanout.New(cache, adapter.MaxAttemptsFor, reg)
+	fan := fanout.New(cache, adapter.MaxAttemptsFor, reg).
+		WithExpiry(fanout.NewExpiry(map[string]int{testTenantID: 7}))
 
 	stub := newStubIntrospector()
 

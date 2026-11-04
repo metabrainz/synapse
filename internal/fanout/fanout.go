@@ -8,12 +8,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
+	"github.com/metabrainz/synapse/internal/channel"
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/deliveries"
 	"github.com/metabrainz/synapse/internal/store/events"
+	"github.com/metabrainz/synapse/internal/store/notifications"
 	"github.com/metabrainz/synapse/internal/store/outbox"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 )
@@ -69,26 +72,43 @@ type Fanout struct {
 	subs        Lookup
 	maxAttempts func(channelType string) int
 	reg         *eventtype.Registry
+	expiry      Expiry
 }
 
 // New creates a Fanout. Pass adapter.MaxAttemptsFor as maxAttempts in production.
 func New(subs Lookup, maxAttempts func(channelType string) int, reg *eventtype.Registry) *Fanout {
-	return &Fanout{subs: subs, maxAttempts: maxAttempts, reg: reg}
+	return &Fanout{subs: subs, maxAttempts: maxAttempts, reg: reg, expiry: NewExpiry(nil)}
+}
+
+// WithExpiry sets the per-tenant retention that gives notifications their expires_at.
+func (f *Fanout) WithExpiry(e Expiry) *Fanout {
+	f.expiry = e
+	return f
 }
 
 // Preview returns the number of channels that would receive this event
 // without writing anything — used by the dry_run ingest path.
 func (f *Fanout) Preview(ctx context.Context, tenantID, eventType string, recipients []string) (int, error) {
-	channels, err := f.subs.ListActiveForRecipients(ctx, tenantID, eventType, recipients)
+	channels, err := f.resolve(ctx, tenantID, eventType, recipients)
 	if err != nil {
-		return 0, fmt.Errorf("list subscriptions: %w", err)
+		return 0, err
 	}
-	channels = filterAllowed(channels, f.reg.AllowedChannels(tenantID, eventType))
 	return len(channels), nil
 }
 
-// Fan creates one delivery and one outbox row per active subscription matching ev.
-// Returns the number of deliveries created (0 if no subscriptions match).
+// resolve returns the recipients' allowed subscribed channels plus the channels enabled for everyone.
+func (f *Fanout) resolve(ctx context.Context, tenantID, eventType string, recipients []string) ([]subscriptions.ActiveChannel, error) {
+	subs, err := f.subs.ListActiveForRecipients(ctx, tenantID, eventType, recipients)
+	if err != nil {
+		return nil, fmt.Errorf("list subscriptions: %w", err)
+	}
+	allowed := f.reg.AllowedChannels(tenantID, eventType)
+	return withEveryoneChannels(filterAllowed(subs, allowed), recipients, allowed), nil
+}
+
+// Fan creates one delivery and one outbox row per active subscription matching ev,
+// and one notification per recipient if the event type allows in-app.
+// Returns the number of results created.
 func (f *Fanout) Fan(ctx context.Context, q store.Querier, ev events.Event) (int, error) {
 	return f.FanBatch(ctx, q, []events.Event{ev})
 }
@@ -97,7 +117,8 @@ func (f *Fanout) Fan(ctx context.Context, q store.Querier, ev events.Event) (int
 // of how many events or subscriptions are involved. It first resolves all
 // subscriptions in memory, then writes every delivery in one InsertBatch call
 // (getting all IDs back), marshals those IDs into outbox payloads, and writes
-// every outbox row in a second InsertBatch call. Must be called inside a
+// every outbox row in a second InsertBatch call. Notifications for internal
+// channels are written in one extra call. Must be called inside a
 // store.WithTx callback — all writes are atomic with the upstream event inserts.
 func (f *Fanout) FanBatch(ctx context.Context, q store.Querier, evs []events.Event) (int, error) {
 	// target represents one planned delivery: a single (event, subscription) pair.
@@ -109,19 +130,34 @@ func (f *Fanout) FanBatch(ctx context.Context, q store.Querier, evs []events.Eve
 
 	// Resolve all subscriptions in memory before touching the DB.
 	var targets []target
+	var inbox []notifications.Entry
+	now := time.Now()
 	for _, ev := range evs {
-		subs, err := f.subs.ListActiveForRecipients(ctx, ev.TenantID, ev.EventType, ev.Recipients)
+		subs, err := f.resolve(ctx, ev.TenantID, ev.EventType, ev.Recipients)
 		if err != nil {
-			return 0, fmt.Errorf("list subscriptions: %w", err)
+			return 0, err
 		}
-		// Gate 1: filter by allowed channel types from the static registry.
-		subs = filterAllowed(subs, f.reg.AllowedChannels(ev.TenantID, ev.EventType))
 		for _, sub := range subs {
+			if channel.Of(sub.ChannelType).Kind == channel.Internal {
+				inbox = append(inbox, notifications.Entry{
+					EventID:   ev.ID,
+					UserID:    sub.UserID,
+					TenantID:  ev.TenantID,
+					ExpiresAt: now.Add(f.expiry.For(ev.TenantID)),
+				})
+				continue
+			}
 			targets = append(targets, target{ev, sub, f.maxAttempts(sub.ChannelType)})
 		}
 	}
+
+	if len(inbox) > 0 {
+		if err := notifications.InsertBatch(ctx, q, inbox); err != nil {
+			return 0, fmt.Errorf("batch insert notifications: %w", err)
+		}
+	}
 	if len(targets) == 0 {
-		return 0, nil
+		return len(inbox), nil
 	}
 
 	// Round 1: insert all delivery records in one query; returned IDs are
@@ -156,7 +192,27 @@ func (f *Fanout) FanBatch(ctx context.Context, q store.Querier, evs []events.Eve
 		return 0, fmt.Errorf("batch insert outbox: %w", err)
 	}
 
-	return len(targets), nil
+	return len(targets) + len(inbox), nil
+}
+
+// withEveryoneChannels adds one result per recipient for each channel enabled for
+// everyone, dropping any subscription-lookup row for those channels.
+func withEveryoneChannels(subs []subscriptions.ActiveChannel, recipients, allowed []string) []subscriptions.ActiveChannel {
+	out := subs[:0]
+	for _, sub := range subs {
+		if channel.Subscribable(sub.ChannelType) {
+			out = append(out, sub)
+		}
+	}
+	for _, spec := range channel.All() {
+		if spec.Enablement != channel.Everyone || !slices.Contains(allowed, spec.Type) {
+			continue
+		}
+		for _, userID := range recipients {
+			out = append(out, subscriptions.ActiveChannel{UserID: userID, ChannelType: spec.Type})
+		}
+	}
+	return out
 }
 
 // filterAllowed applies Gate 1: keeps only channels whose type is in the allowed list.

@@ -5,6 +5,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/metabrainz/synapse/internal/api/middleware"
+	"github.com/metabrainz/synapse/internal/channel"
 )
 
 // GET /v1/me/tenants/{tenant_id}/event-types
@@ -34,7 +35,18 @@ func (h *meHandler) listTenantEventTypes(ctx context.Context, input *listTenantE
 
 	out := make([]eventTypeItem, len(eventTypes))
 	for i, et := range eventTypes {
-		out[i] = eventTypeItem{Name: et.EventName(), AllowedChannels: et.AllowedChannels()}
+		out[i] = eventTypeItem{Name: et.EventName(), AllowedChannels: configurableChannels(et.AllowedChannels())}
 	}
 	return &listTenantEventTypesOutput{Body: out}, nil
+}
+
+// configurableChannels drops channels that are on for everyone.
+func configurableChannels(allowed []string) []string {
+	out := make([]string, 0, len(allowed))
+	for _, ch := range allowed {
+		if channel.Subscribable(ch) {
+			out = append(out, ch)
+		}
+	}
+	return out
 }

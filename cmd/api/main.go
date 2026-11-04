@@ -127,7 +127,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	fan := fanout.New(cache, adapter.MaxAttemptsFor, reg)
+	fan := fanout.New(cache, adapter.MaxAttemptsFor, reg).
+		WithExpiry(fanout.NewExpiry(cfg.TenantInAppRetentionDays()))
 
 	var limiter *ratelimit.Limiter
 	if cfg.RateLimit.Burst > 0 {

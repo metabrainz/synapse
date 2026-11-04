@@ -21,4 +21,5 @@ const (
 	ChannelWebhook  = "webhook"
 	ChannelTelegram = "telegram"
 	ChannelEmail    = "email"
+	ChannelInApp    = "in_app"
 )

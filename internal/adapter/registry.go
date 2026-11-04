@@ -8,6 +8,7 @@ import (
 	"github.com/metabrainz/synapse/internal/adapter/email"
 	"github.com/metabrainz/synapse/internal/adapter/telegram"
 	"github.com/metabrainz/synapse/internal/adapter/webhook"
+	"github.com/metabrainz/synapse/internal/channel"
 )
 
 // ChannelType represents the type of channel for which an adapter is responsible.
@@ -53,6 +54,12 @@ func Build(ctx context.Context, opts Options) error {
 			opts.Redis,
 			opts.Registry,
 		)
+	}
+
+	for _, spec := range channel.All() {
+		if _, ok := Registry[ChannelType(spec.Type)]; !ok && spec.Kind == channel.External {
+			return fmt.Errorf("adapter: external channel %q has no adapter registered", spec.Type)
+		}
 	}
 
 	for channelType, adp := range Registry {

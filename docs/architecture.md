@@ -157,3 +157,11 @@ UI shows channel as connected
 **Message formatting** — each event type defines a message template in `internal/adapter/telegram/templates.go`. Unknown event types fall back to a plain JSON dump. Templates are compiled at startup; a bad template panics immediately rather than at delivery time.
 
 **Webhook verification** — inbound webhook requests are validated against `X-Telegram-Bot-Api-Secret-Token`. The secret is set when registering the webhook via `setWebhook` at startup.
+
+### In-app notifications
+
+Channels have a **kind** (internal: a record Synapse writes itself; external: a call to another system through the delivery, outbox, queue and worker) and an **enablement** (everyone, or only recipients with a subscription), described in `internal/channel`. In-app is internal and enabled for everyone: no channel to create, no tenant assignment and no subscription. Its result is a row in `notifications`, the user's inbox entry, which references the event for its payload. It bypasses the delivery, outbox, relay, queue and worker: at fan-out every recipient of an event whose type lists `eventspec.ChannelInApp` in `AllowedChannels()` gets one notification, written in the same transaction as the event, without going through the subscription tables and without needing a `users` row. Channels that are not subscribable are hidden from the event-type catalog.
+
+Each notification gets an `expires_at` at fan-out, from `tenants.<id>.in_app_retention_days` (30 days if unset). It is frozen on the row, so changing the setting affects only later notifications.
+
+An event type must list `eventspec.ChannelInApp` in `AllowedChannels()` to produce notifications; all ListenBrainz events do except `listen`, which is too high-volume for an inbox.
