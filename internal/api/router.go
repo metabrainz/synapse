@@ -145,7 +145,10 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 
 	// Huma API — generates OpenAPI spec from handler types.
 	// Spec: GET /openapi.json   Swagger UI: GET /docs
-	api := humachi.New(r, huma.DefaultConfig("Synapse API", "1.0.0"))
+	// CreateHooks is cleared so responses carry no $schema field or Link header.
+	apiCfg := huma.DefaultConfig("Synapse API", "1.0.0")
+	apiCfg.CreateHooks = nil
+	api := humachi.New(r, apiCfg)
 	// json.RawMessage fields (notification payloads) are documented as objects.
 	api.OpenAPI().Components.Schemas.RegisterTypeAlias(reflect.TypeFor[json.RawMessage](), reflect.TypeFor[JSONObject]())
 
