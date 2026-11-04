@@ -29,7 +29,30 @@ func Load(path string) (*Config, error) {
 	if err := applyEnv(&cfg); err != nil {
 		return nil, fmt.Errorf("invalid environment: %w", err)
 	}
+	if err := cfg.validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
 	return &cfg, nil
+}
+
+func (c *Config) validate() error {
+	for id, tc := range c.Tenants {
+		if tc.InAppRetentionDays < 0 {
+			return fmt.Errorf("tenants.%s.in_app_retention_days must be >= 0, got %d", id, tc.InAppRetentionDays)
+		}
+	}
+	return nil
+}
+
+// TenantInAppRetentionDays omits tenants that set none.
+func (c *Config) TenantInAppRetentionDays() map[string]int {
+	out := make(map[string]int, len(c.Tenants))
+	for id, tc := range c.Tenants {
+		if tc.InAppRetentionDays > 0 {
+			out[id] = tc.InAppRetentionDays
+		}
+	}
+	return out
 }
 
 func defaultConfig() Config {
