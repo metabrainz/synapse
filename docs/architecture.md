@@ -164,4 +164,14 @@ Channels have a **kind** (internal: a record Synapse writes itself; external: a 
 
 Each notification gets an `expires_at` at fan-out, from `tenants.<id>.in_app_retention_days` (30 days if unset). It is frozen on the row, so changing the setting affects only later notifications.
 
+Users read their notifications with their OAuth token (Surface B), scoped by tenant. A notification past its `expires_at` is hidden by the API from the moment it expires, whether or not cleanup has deleted it yet.
+
+| Route | Purpose |
+|---|---|
+| `GET /v1/me/tenants/{tenant}/notifications` | Newest first. `limit`, `before_id` (cursor; use `next_cursor`), `event_type`, `unread=true` |
+| `GET .../notifications/unread-count` | Badge count |
+| `POST .../notifications/{id}/read` | Mark one read (idempotent) |
+| `POST .../notifications/read-all` | Mark all read for the tenant |
+| `DELETE .../notifications/{id}` | Dismiss (permanent) |
+
 An event type must list `eventspec.ChannelInApp` in `AllowedChannels()` to produce notifications; all ListenBrainz events do except `listen`, which is too high-volume for an inbox.

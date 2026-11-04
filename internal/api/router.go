@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/ratelimit"
+	"github.com/metabrainz/synapse/internal/store/notifications"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
 	"github.com/metabrainz/synapse/internal/store/usereventsubs"
 	"github.com/metabrainz/synapse/internal/store/users"
@@ -44,6 +47,7 @@ type Deps struct {
 	UserChannels   *userchannels.Repo
 	TenantMappings *usertenant.Repo
 	Subscriptions  *usereventsubs.Repo
+	Notifications  *notifications.Repo
 	Fanout         *fanout.Fanout
 	Registry       *eventtype.Registry
 }
@@ -140,6 +144,8 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 	// Huma API — generates OpenAPI spec from handler types.
 	// Spec: GET /openapi.json   Swagger UI: GET /docs
 	api := humachi.New(r, huma.DefaultConfig("Synapse API", "1.0.0"))
+	// json.RawMessage fields (notification payloads) are documented as objects.
+	api.OpenAPI().Components.Schemas.RegisterTypeAlias(reflect.TypeFor[json.RawMessage](), reflect.TypeFor[JSONObject]())
 
 	// Security schemes — wired to the Swagger UI "Authorize" button.
 	spec := api.OpenAPI()
@@ -161,7 +167,7 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 		},
 	}
 
-	registerRoutes(api, d.Pool, d.Fanout, d.Registry, d.UserChannels, d.TenantMappings, d.Subscriptions)
+	registerRoutes(api, d.Pool, d.Fanout, d.Registry, d.UserChannels, d.TenantMappings, d.Subscriptions, d.Notifications)
 
 	for _, ct := range adapter.ChannelTypes() {
 		if rp, ok := adapter.Registry[ct].(adapter.RouteProvider); ok {

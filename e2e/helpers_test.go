@@ -27,6 +27,7 @@ import (
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/store"
+	"github.com/metabrainz/synapse/internal/store/notifications"
 	"github.com/metabrainz/synapse/internal/store/outbox"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
@@ -143,6 +144,7 @@ func setup(t *testing.T) *env {
 			UserChannels:   userchannels.New(pool),
 			TenantMappings: usertenant.New(pool),
 			Subscriptions:  usereventsubs.New(pool),
+			Notifications:  notifications.New(pool),
 			Fanout:         fan,
 			Registry:       reg,
 		},

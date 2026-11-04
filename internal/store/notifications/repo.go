@@ -3,10 +3,16 @@ package notifications
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metabrainz/synapse/internal/store"
 )
+
+var ErrNotFound = errors.New("notification not found")
 
 type Entry struct {
 	EventID   int64
@@ -35,4 +41,122 @@ func InsertBatch(ctx context.Context, q store.Querier, batch []Entry) error {
 		eventIDs, userIDs, tenantIDs, expiresAt,
 	)
 	return err
+}
+
+type Notification struct {
+	ID        int64           `json:"id" doc:"Stable, increasing; use as the pagination cursor"`
+	UserID    string          `json:"-"`
+	EventID   int64           `json:"event_id" doc:"Source event ID"`
+	TenantID  string          `json:"tenant_id" doc:"Tenant that produced the event"`
+	EventType string          `json:"event_type" doc:"Event type, e.g. follow"`
+	Payload   json.RawMessage `json:"payload" doc:"Event payload exactly as published by the tenant"`
+	ReadAt    *time.Time      `json:"read_at,omitempty" doc:"When it was marked read; absent while unread"`
+	CreatedAt time.Time       `json:"created_at" doc:"When the event was created"`
+	ExpiresAt time.Time       `json:"expires_at" doc:"After this time the notification is no longer returned"`
+}
+
+type ListParams struct {
+	UserID     string
+	TenantID   string
+	BeforeID   int64
+	EventType  string
+	UnreadOnly bool
+	Limit      int
+}
+
+type Repo struct{ pool *pgxpool.Pool }
+
+func New(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
+
+// visible selects a tenant's notifications that are neither dismissed nor expired,
+// whether or not cleanup has deleted the expired ones yet.
+const visible = `n.user_id = $1 AND n.tenant_id = $2 AND n.dismissed_at IS NULL AND n.expires_at > now()`
+
+// List returns up to p.Limit notifications, newest first, and the cursor for the
+// next page (0 when there are no more).
+func (r *Repo) List(ctx context.Context, p ListParams) ([]Notification, int64, error) {
+	where := visible
+	args := []any{p.UserID, p.TenantID}
+	if p.BeforeID > 0 {
+		args = append(args, p.BeforeID)
+		where += fmt.Sprintf(` AND n.id < $%d`, len(args))
+	}
+	if p.EventType != "" {
+		args = append(args, p.EventType)
+		where += fmt.Sprintf(` AND e.event_type = $%d`, len(args))
+	}
+	if p.UnreadOnly {
+		where += ` AND n.read_at IS NULL`
+	}
+	args = append(args, p.Limit+1)
+
+	rows, err := r.pool.Query(ctx,
+		`SELECT n.id, n.event_id, n.tenant_id, e.event_type, e.payload, n.read_at, e.created_at, n.expires_at
+		 FROM notifications n
+		 JOIN events e ON e.id = n.event_id
+		 WHERE `+where+fmt.Sprintf(` ORDER BY n.id DESC LIMIT $%d`, len(args)),
+		args...,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	out := []Notification{}
+	for rows.Next() {
+		var n Notification
+		if err := rows.Scan(&n.ID, &n.EventID, &n.TenantID, &n.EventType, &n.Payload, &n.ReadAt, &n.CreatedAt, &n.ExpiresAt); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	var next int64
+	if len(out) > p.Limit {
+		out = out[:p.Limit]
+		next = out[len(out)-1].ID
+	}
+	return out, next, nil
+}
+
+func (r *Repo) UnreadCount(ctx context.Context, userID, tenantID string) (int64, error) {
+	var n int64
+	err := r.pool.QueryRow(ctx,
+		`SELECT count(*) FROM notifications n WHERE `+visible+` AND n.read_at IS NULL`,
+		userID, tenantID).Scan(&n)
+	return n, err
+}
+
+// MarkRead is idempotent: re-marking keeps the original read_at.
+func (r *Repo) MarkRead(ctx context.Context, userID, tenantID string, id int64) error {
+	return r.updateOne(ctx,
+		`UPDATE notifications n SET read_at = COALESCE(n.read_at, now()) WHERE n.id = $3 AND `+visible,
+		userID, tenantID, id)
+}
+
+func (r *Repo) Dismiss(ctx context.Context, userID, tenantID string, id int64) error {
+	return r.updateOne(ctx,
+		`UPDATE notifications n SET dismissed_at = now() WHERE n.id = $3 AND `+visible,
+		userID, tenantID, id)
+}
+
+func (r *Repo) MarkAllRead(ctx context.Context, userID, tenantID string) (int64, error) {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE notifications n SET read_at = now() WHERE n.read_at IS NULL AND `+visible,
+		userID, tenantID)
+	return tag.RowsAffected(), err
+}
+
+func (r *Repo) updateOne(ctx context.Context, query string, args ...any) error {
+	tag, err := r.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
