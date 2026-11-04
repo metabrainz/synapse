@@ -55,6 +55,7 @@ type Notification struct {
 	ExpiresAt time.Time       `json:"expires_at" doc:"After this time the notification is no longer returned"`
 }
 
+// ListParams.TenantID limits the list to one tenant; empty means every tenant.
 type ListParams struct {
 	UserID     string
 	TenantID   string
@@ -68,15 +69,22 @@ type Repo struct{ pool *pgxpool.Pool }
 
 func New(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
 
-// visible selects a tenant's notifications that are neither dismissed nor expired,
-// whether or not cleanup has deleted the expired ones yet.
-const visible = `n.user_id = $1 AND n.tenant_id = $2 AND n.dismissed_at IS NULL AND n.expires_at > now()`
+// inboxWhere selects a user's visible notifications for one tenant, or all when
+// tenantID is empty. Expired rows are hidden even before cleanup deletes them.
+func inboxWhere(userID, tenantID string) (string, []any) {
+	where := `n.user_id = $1 AND n.dismissed_at IS NULL AND n.expires_at > now()`
+	args := []any{userID}
+	if tenantID != "" {
+		where += ` AND n.tenant_id = $2`
+		args = append(args, tenantID)
+	}
+	return where, args
+}
 
 // List returns up to p.Limit notifications, newest first, and the cursor for the
 // next page (0 when there are no more).
 func (r *Repo) List(ctx context.Context, p ListParams) ([]Notification, int64, error) {
-	where := visible
-	args := []any{p.UserID, p.TenantID}
+	where, args := inboxWhere(p.UserID, p.TenantID)
 	if p.BeforeID > 0 {
 		args = append(args, p.BeforeID)
 		where += fmt.Sprintf(` AND n.id < $%d`, len(args))
@@ -144,30 +152,51 @@ func (r *Repo) ListByEvent(ctx context.Context, eventID int64) ([]Notification, 
 }
 
 func (r *Repo) UnreadCount(ctx context.Context, userID, tenantID string) (int64, error) {
+	where, args := inboxWhere(userID, tenantID)
 	var n int64
-	err := r.pool.QueryRow(ctx,
-		`SELECT count(*) FROM notifications n WHERE `+visible+` AND n.read_at IS NULL`,
-		userID, tenantID).Scan(&n)
+	err := r.pool.QueryRow(ctx, `SELECT count(*) FROM notifications n WHERE `+where+` AND n.read_at IS NULL`, args...).Scan(&n)
 	return n, err
+}
+
+func (r *Repo) UnreadCountsByTenant(ctx context.Context, userID string) (map[string]int64, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT n.tenant_id, count(*) FROM notifications n
+		 WHERE n.user_id = $1 AND n.dismissed_at IS NULL AND n.expires_at > now() AND n.read_at IS NULL
+		 GROUP BY n.tenant_id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var tenant string
+		var n int64
+		if err := rows.Scan(&tenant, &n); err != nil {
+			return nil, err
+		}
+		out[tenant] = n
+	}
+	return out, rows.Err()
 }
 
 // MarkRead is idempotent: re-marking keeps the original read_at.
 func (r *Repo) MarkRead(ctx context.Context, userID, tenantID string, id int64) error {
+	where, args := inboxWhere(userID, tenantID)
+	args = append(args, id)
 	return r.updateOne(ctx,
-		`UPDATE notifications n SET read_at = COALESCE(n.read_at, now()) WHERE n.id = $3 AND `+visible,
-		userID, tenantID, id)
+		fmt.Sprintf(`UPDATE notifications n SET read_at = COALESCE(n.read_at, now()) WHERE n.id = $%d AND `, len(args))+where, args...)
 }
 
 func (r *Repo) Dismiss(ctx context.Context, userID, tenantID string, id int64) error {
+	where, args := inboxWhere(userID, tenantID)
+	args = append(args, id)
 	return r.updateOne(ctx,
-		`UPDATE notifications n SET dismissed_at = now() WHERE n.id = $3 AND `+visible,
-		userID, tenantID, id)
+		fmt.Sprintf(`UPDATE notifications n SET dismissed_at = now() WHERE n.id = $%d AND `, len(args))+where, args...)
 }
 
 func (r *Repo) MarkAllRead(ctx context.Context, userID, tenantID string) (int64, error) {
-	tag, err := r.pool.Exec(ctx,
-		`UPDATE notifications n SET read_at = now() WHERE n.read_at IS NULL AND `+visible,
-		userID, tenantID)
+	where, args := inboxWhere(userID, tenantID)
+	tag, err := r.pool.Exec(ctx, `UPDATE notifications n SET read_at = now() WHERE n.read_at IS NULL AND `+where, args...)
 	return tag.RowsAffected(), err
 }
 

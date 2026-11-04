@@ -227,6 +227,54 @@ func registerRoutes(
 		Security:      surfaceBSec,
 	}, me.dismissNotification)
 
+	// Notifications across every tenant.
+	huma.Register(api, huma.Operation{
+		OperationID: "list-all-notifications",
+		Method:      http.MethodGet,
+		Path:        "/v1/me/notifications",
+		Summary:     "List the user's in-app notifications across tenants, newest first",
+		Tags:        []string{"notifications"},
+		Security:    surfaceBSec,
+	}, me.listAllNotifications)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "all-notifications-unread-counts",
+		Method:      http.MethodGet,
+		Path:        "/v1/me/notifications/unread-counts",
+		Summary:     "Count unread in-app notifications across tenants, in total and per tenant",
+		Tags:        []string{"notifications"},
+		Security:    surfaceBSec,
+	}, me.unreadCounts)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "mark-all-notifications-read-all-tenants",
+		Method:      http.MethodPost,
+		Path:        "/v1/me/notifications/read-all",
+		Summary:     "Mark every in-app notification of every tenant as read",
+		Tags:        []string{"notifications"},
+		Security:    surfaceBSec,
+	}, me.markAllReadAllTenants)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "mark-notification-read-any-tenant",
+		Method:        http.MethodPost,
+		Path:          "/v1/me/notifications/{id}/read",
+		Summary:       "Mark one in-app notification of any tenant as read",
+		Tags:          []string{"notifications"},
+		DefaultStatus: http.StatusNoContent,
+		Security:      surfaceBSec,
+	}, me.markReadAnyTenant)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "dismiss-notification-any-tenant",
+		Method:        http.MethodDelete,
+		Path:          "/v1/me/notifications/{id}",
+		Summary:       "Dismiss an in-app notification of any tenant",
+		Tags:          []string{"notifications"},
+		DefaultStatus: http.StatusNoContent,
+		Security:      surfaceBSec,
+	}, me.dismissAnyTenant)
+
 	// Preferences — per-user settings about how the inbox is presented.
 	huma.Register(api, huma.Operation{
 		OperationID: "get-preferences",

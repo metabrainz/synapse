@@ -178,4 +178,6 @@ Users read their notifications with their OAuth token (Surface B), scoped by ten
 
 An event type must list `eventspec.ChannelInApp` in `AllowedChannels()` to produce notifications; all ListenBrainz events do except `listen`, which is too high-volume for an inbox.
 
-Per-user preferences live in `user_preferences` and are read and changed with `GET` and `PATCH /v1/me/preferences` (no row means the defaults; the first `PATCH` creates it). The first preference is `cross_tenant_notifications` (default off), a presentation setting for the inbox.
+Per-user preferences live in `user_preferences` and are read and changed with `GET` and `PATCH /v1/me/preferences` (no row means the defaults; the first `PATCH` creates it). `cross_tenant_notifications` (default off) controls access to the global notification routes. It is a presentation preference, not an access control: the user's token is not bound to a tenant, so any application holding it can read any tenant's notifications.
+
+The global routes under `/v1/me/notifications` span every tenant: a list with an optional `tenant_id` filter, `unread-counts` with a per-tenant breakdown, read-all, and read and dismiss by id. They return 403 unless the preference is on. The tenant routes always stay scoped to their tenant and ignore the preference.

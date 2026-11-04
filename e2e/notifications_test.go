@@ -11,6 +11,7 @@ import (
 type notificationPage struct {
 	Notifications []struct {
 		ID        int64  `json:"id"`
+		TenantID  string `json:"tenant_id"`
 		EventType string `json:"event_type"`
 	} `json:"notifications"`
 	NextCursor *int64 `json:"next_cursor"`
@@ -197,6 +198,164 @@ func TestInAppNotifications(t *testing.T) {
 		r.Body.Close()
 		if r.StatusCode != http.StatusNotFound {
 			t.Fatalf("want 404, got %d", r.StatusCode)
+		}
+	})
+}
+
+func (e *env) setPreference(token string, on bool) int {
+	e.t.Helper()
+	r := e.userDo("PATCH", "/v1/me/preferences", map[string]any{"cross_tenant_notifications": on}, token)
+	r.Body.Close()
+	return r.StatusCode
+}
+
+// seedTwoTenants creates two listenbrainz notifications and one from another tenant,
+// and returns the id of the latter.
+func (e *env) seedTwoTenants() int64 {
+	e.t.Helper()
+	for range 2 {
+		r := e.tenantDo("POST", "/v1/events", map[string]any{
+			"recipients": []string{"alice"},
+			"event_type": "follow",
+			"payload":    map[string]any{"actor": map[string]any{"username": "carol", "url": "https://listenbrainz.org/user/carol"}},
+		}, e.apiKey)
+		r.Body.Close()
+	}
+	e.mustExec(`INSERT INTO events (id, tenant_id, event_type, payload) VALUES (900001, 'critiquebrainz', 'follow', '{}')`)
+	var id int64
+	if err := e.pool.QueryRow(e.ctx,
+		`INSERT INTO notifications (event_id, user_id, tenant_id, expires_at)
+		 VALUES (900001, 'alice', 'critiquebrainz', now() + interval '1 day') RETURNING id`).Scan(&id); err != nil {
+		e.t.Fatal(err)
+	}
+	return id
+}
+
+func TestInAppTenantRoutesIgnoreThePreference(t *testing.T) {
+	e := setup(t)
+	e.stub.grant("tok-alice", "alice")
+	otherID := e.seedTwoTenants()
+	if got := e.setPreference("tok-alice", true); got != http.StatusOK {
+		t.Fatalf("enable preference: want 200, got %d", got)
+	}
+	base := "/v1/me/tenants/" + testTenantID + "/notifications"
+
+	_, page := e.listNotifications("tok-alice", "")
+	if len(page.Notifications) != 2 {
+		t.Fatalf("a tenant list must stay scoped to its tenant, got %d notifications", len(page.Notifications))
+	}
+	if got := e.unreadCount("tok-alice"); got != 2 {
+		t.Fatalf("a tenant unread count must stay scoped, want 2, got %d", got)
+	}
+	r := e.userDo("POST", fmt.Sprintf("%s/%d/read", base, otherID), nil, "tok-alice")
+	r.Body.Close()
+	if r.StatusCode != http.StatusNotFound {
+		t.Fatalf("another tenant's notification through a tenant route: want 404, got %d", r.StatusCode)
+	}
+	ra := e.userDo("POST", base+"/read-all", nil, "tok-alice")
+	var out struct {
+		Updated int `json:"updated"`
+	}
+	decodeJSON(t, ra, &out)
+	if out.Updated != 2 {
+		t.Fatalf("a tenant's read-all must touch only its own notifications, want 2 updated, got %d", out.Updated)
+	}
+	var otherUnread bool
+	e.pool.QueryRow(e.ctx, `SELECT read_at IS NULL FROM notifications WHERE id = $1`, otherID).Scan(&otherUnread)
+	if !otherUnread {
+		t.Fatal("a tenant's read-all marked another tenant's notification read")
+	}
+}
+
+func TestInAppGlobalRoutes(t *testing.T) {
+	e := setup(t)
+	e.stub.grant("tok-alice", "alice")
+	otherID := e.seedTwoTenants()
+	all := "/v1/me/notifications"
+
+	t.Run("forbidden until the preference is on", func(t *testing.T) {
+		for name, r := range map[string]*http.Response{
+			"list":      e.userDo("GET", all, nil, "tok-alice"),
+			"counts":    e.userDo("GET", all+"/unread-counts", nil, "tok-alice"),
+			"read-all":  e.userDo("POST", all+"/read-all", nil, "tok-alice"),
+			"read":      e.userDo("POST", fmt.Sprintf("%s/%d/read", all, otherID), nil, "tok-alice"),
+			"dismissal": e.userDo("DELETE", fmt.Sprintf("%s/%d", all, otherID), nil, "tok-alice"),
+		} {
+			r.Body.Close()
+			if r.StatusCode != http.StatusForbidden {
+				t.Errorf("%s: want 403, got %d", name, r.StatusCode)
+			}
+		}
+	})
+
+	if got := e.setPreference("tok-alice", true); got != http.StatusOK {
+		t.Fatalf("enable preference: want 200, got %d", got)
+	}
+
+	t.Run("list and counts span tenants", func(t *testing.T) {
+		r := e.userDo("GET", all, nil, "tok-alice")
+		var page notificationPage
+		decodeJSON(t, r, &page)
+		tenants := map[string]int{}
+		for _, n := range page.Notifications {
+			tenants[n.TenantID]++
+		}
+		if tenants[testTenantID] != 2 || tenants["critiquebrainz"] != 1 {
+			t.Fatalf("want 2 from %s and 1 from critiquebrainz, got %v", testTenantID, tenants)
+		}
+		r = e.userDo("GET", all+"?tenant_id="+testTenantID, nil, "tok-alice")
+		decodeJSON(t, r, &page)
+		if len(page.Notifications) != 2 {
+			t.Fatalf("tenant_id filter: want only the 2 %s notifications, got %d", testTenantID, len(page.Notifications))
+		}
+		r = e.userDo("GET", all+"/unread-counts", nil, "tok-alice")
+		var counts struct {
+			Count    int            `json:"count"`
+			ByTenant map[string]int `json:"by_tenant"`
+		}
+		decodeJSON(t, r, &counts)
+		if counts.Count != 3 || counts.ByTenant[testTenantID] != 2 || counts.ByTenant["critiquebrainz"] != 1 {
+			t.Fatalf("unread counts: want 3 (2 + 1), got %+v", counts)
+		}
+	})
+
+	t.Run("mutations reach any tenant", func(t *testing.T) {
+		r := e.userDo("POST", fmt.Sprintf("%s/%d/read", all, otherID), nil, "tok-alice")
+		r.Body.Close()
+		if r.StatusCode != http.StatusNoContent {
+			t.Fatalf("mark another tenant's notification read: want 204, got %d", r.StatusCode)
+		}
+		ra := e.userDo("POST", all+"/read-all", nil, "tok-alice")
+		var out struct {
+			Updated int `json:"updated"`
+		}
+		decodeJSON(t, ra, &out)
+		if out.Updated != 2 {
+			t.Fatalf("global read-all: want the 2 remaining unread, got %d", out.Updated)
+		}
+		rd := e.userDo("DELETE", fmt.Sprintf("%s/%d", all, otherID), nil, "tok-alice")
+		rd.Body.Close()
+		if rd.StatusCode != http.StatusNoContent {
+			t.Fatalf("dismiss: want 204, got %d", rd.StatusCode)
+		}
+		r2 := e.userDo("GET", all, nil, "tok-alice")
+		var page notificationPage
+		decodeJSON(t, r2, &page)
+		for _, n := range page.Notifications {
+			if n.TenantID == "critiquebrainz" {
+				t.Fatalf("a dismissed notification must disappear, still listed: %+v", n)
+			}
+		}
+	})
+
+	t.Run("forbidden again once the preference is turned off", func(t *testing.T) {
+		if got := e.setPreference("tok-alice", false); got != http.StatusOK {
+			t.Fatalf("disable preference: want 200, got %d", got)
+		}
+		r := e.userDo("GET", all, nil, "tok-alice")
+		r.Body.Close()
+		if r.StatusCode != http.StatusForbidden {
+			t.Fatalf("want 403, got %d", r.StatusCode)
 		}
 	})
 }
