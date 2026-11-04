@@ -21,6 +21,8 @@ import (
 	"github.com/metabrainz/synapse/internal/observability"
 	"github.com/metabrainz/synapse/internal/ratelimit"
 	"github.com/metabrainz/synapse/internal/store"
+	"github.com/metabrainz/synapse/internal/store/notifications"
+	"github.com/metabrainz/synapse/internal/store/preferences"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
 	"github.com/metabrainz/synapse/internal/store/usereventsubs"
@@ -67,6 +69,8 @@ func main() {
 	userChannels := userchannels.New(pool)
 	tenantMappings := usertenant.New(pool)
 	eventSubs := usereventsubs.New(pool)
+	inbox := notifications.New(pool)
+	prefs := preferences.New(pool)
 
 	var introspector oauth.Introspector
 	if cfg.OAuth.IntrospectionURL != "" && cfg.OAuth.ClientID != "" {
@@ -127,7 +131,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	fan := fanout.New(cache, adapter.MaxAttemptsFor, reg)
+	fan := fanout.New(cache, adapter.MaxAttemptsFor, reg).
+		WithExpiry(fanout.NewExpiry(cfg.TenantInAppRetentionDays()))
 
 	var limiter *ratelimit.Limiter
 	if cfg.RateLimit.Burst > 0 {
@@ -149,6 +154,8 @@ func main() {
 			UserChannels:   userChannels,
 			TenantMappings: tenantMappings,
 			Subscriptions:  eventSubs,
+			Notifications:  inbox,
+			Preferences:    prefs,
 			Fanout:         fan,
 			Registry:       reg,
 		},

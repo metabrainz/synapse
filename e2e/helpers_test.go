@@ -27,7 +27,9 @@ import (
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/store"
+	"github.com/metabrainz/synapse/internal/store/notifications"
 	"github.com/metabrainz/synapse/internal/store/outbox"
+	"github.com/metabrainz/synapse/internal/store/preferences"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
 	"github.com/metabrainz/synapse/internal/store/usereventsubs"
@@ -127,7 +129,8 @@ func setup(t *testing.T) *env {
 		t.Fatalf("adapter.Build: %v", err)
 	}
 
-	fan := fanout.New(cache, adapter.MaxAttemptsFor, reg)
+	fan := fanout.New(cache, adapter.MaxAttemptsFor, reg).
+		WithExpiry(fanout.NewExpiry(map[string]int{testTenantID: 7}))
 
 	stub := newStubIntrospector()
 
@@ -142,6 +145,8 @@ func setup(t *testing.T) *env {
 			UserChannels:   userchannels.New(pool),
 			TenantMappings: usertenant.New(pool),
 			Subscriptions:  usereventsubs.New(pool),
+			Notifications:  notifications.New(pool),
+			Preferences:    preferences.New(pool),
 			Fanout:         fan,
 			Registry:       reg,
 		},

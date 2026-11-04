@@ -13,7 +13,7 @@ type recordingPinEvent struct{}
 
 func (recordingPinEvent) EventName() string { return "recording_pin" }
 func (recordingPinEvent) AllowedChannels() []string {
-	return []string{eventspec.ChannelWebhook, eventspec.ChannelTelegram, eventspec.ChannelEmail}
+	return []string{eventspec.ChannelWebhook, eventspec.ChannelTelegram, eventspec.ChannelEmail, eventspec.ChannelInApp}
 }
 func (recordingPinEvent) SchemaVersion() string { return "1" }
 func (recordingPinEvent) Schema() []byte        { return recordingPinSchema }

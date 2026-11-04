@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/store/notifications"
+	"github.com/metabrainz/synapse/internal/store/preferences"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
 	"github.com/metabrainz/synapse/internal/store/usereventsubs"
 	"github.com/metabrainz/synapse/internal/store/usertenant"
@@ -31,6 +33,8 @@ func registerRoutes(
 	userChannels *userchannels.Repo,
 	tenantMappings *usertenant.Repo,
 	subscriptions *usereventsubs.Repo,
+	inbox *notifications.Repo,
+	prefs *preferences.Repo,
 ) {
 	// --- Surface A: tenant API key ---
 
@@ -53,7 +57,7 @@ func registerRoutes(
 		Summary:     "List delivery records for an event (tenant-scoped)",
 		Tags:        []string{"events"},
 		Security:    surfaceASec,
-	}, (&deliveriesHandler{pool: pool}).listByEvent)
+	}, (&deliveriesHandler{pool: pool, notifications: inbox}).listByEvent)
 
 	// --- Surface B: MetaBrainz OAuth token ---
 
@@ -61,6 +65,8 @@ func registerRoutes(
 		channels:       userChannels,
 		tenantMappings: tenantMappings,
 		subscriptions:  subscriptions,
+		notifications:  inbox,
+		preferences:    prefs,
 		reg:            reg,
 	}
 
@@ -172,4 +178,119 @@ func registerRoutes(
 		DefaultStatus: http.StatusNoContent,
 		Security:      surfaceBSec,
 	}, me.unsubscribe)
+
+	// Notifications — the user's in-app inbox for a tenant.
+	huma.Register(api, huma.Operation{
+		OperationID: "list-notifications",
+		Method:      http.MethodGet,
+		Path:        "/v1/me/tenants/{tenant_id}/notifications",
+		Summary:     "List the user's in-app notifications for a tenant, newest first",
+		Tags:        []string{"notifications"},
+		Security:    surfaceBSec,
+	}, me.listNotifications)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "notifications-unread-count",
+		Method:      http.MethodGet,
+		Path:        "/v1/me/tenants/{tenant_id}/notifications/unread-count",
+		Summary:     "Count unread in-app notifications for a tenant",
+		Tags:        []string{"notifications"},
+		Security:    surfaceBSec,
+	}, me.unreadCount)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "mark-all-notifications-read",
+		Method:      http.MethodPost,
+		Path:        "/v1/me/tenants/{tenant_id}/notifications/read-all",
+		Summary:     "Mark all of the user's in-app notifications for a tenant as read",
+		Tags:        []string{"notifications"},
+		Security:    surfaceBSec,
+	}, me.markAllRead)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "mark-notification-read",
+		Method:        http.MethodPost,
+		Path:          "/v1/me/tenants/{tenant_id}/notifications/{id}/read",
+		Summary:       "Mark one in-app notification as read",
+		Tags:          []string{"notifications"},
+		DefaultStatus: http.StatusNoContent,
+		Security:      surfaceBSec,
+	}, me.markRead)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "dismiss-notification",
+		Method:        http.MethodDelete,
+		Path:          "/v1/me/tenants/{tenant_id}/notifications/{id}",
+		Summary:       "Dismiss (hide) an in-app notification",
+		Tags:          []string{"notifications"},
+		DefaultStatus: http.StatusNoContent,
+		Security:      surfaceBSec,
+	}, me.dismissNotification)
+
+	// Notifications across every tenant.
+	huma.Register(api, huma.Operation{
+		OperationID: "list-all-notifications",
+		Method:      http.MethodGet,
+		Path:        "/v1/me/notifications",
+		Summary:     "List the user's in-app notifications across tenants, newest first",
+		Tags:        []string{"notifications"},
+		Security:    surfaceBSec,
+	}, me.listAllNotifications)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "all-notifications-unread-counts",
+		Method:      http.MethodGet,
+		Path:        "/v1/me/notifications/unread-counts",
+		Summary:     "Count unread in-app notifications across tenants, in total and per tenant",
+		Tags:        []string{"notifications"},
+		Security:    surfaceBSec,
+	}, me.unreadCounts)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "mark-all-notifications-read-all-tenants",
+		Method:      http.MethodPost,
+		Path:        "/v1/me/notifications/read-all",
+		Summary:     "Mark every in-app notification of every tenant as read",
+		Tags:        []string{"notifications"},
+		Security:    surfaceBSec,
+	}, me.markAllReadAllTenants)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "mark-notification-read-any-tenant",
+		Method:        http.MethodPost,
+		Path:          "/v1/me/notifications/{id}/read",
+		Summary:       "Mark one in-app notification of any tenant as read",
+		Tags:          []string{"notifications"},
+		DefaultStatus: http.StatusNoContent,
+		Security:      surfaceBSec,
+	}, me.markReadAnyTenant)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "dismiss-notification-any-tenant",
+		Method:        http.MethodDelete,
+		Path:          "/v1/me/notifications/{id}",
+		Summary:       "Dismiss an in-app notification of any tenant",
+		Tags:          []string{"notifications"},
+		DefaultStatus: http.StatusNoContent,
+		Security:      surfaceBSec,
+	}, me.dismissAnyTenant)
+
+	// Preferences — per-user settings about how the inbox is presented.
+	huma.Register(api, huma.Operation{
+		OperationID: "get-preferences",
+		Method:      http.MethodGet,
+		Path:        "/v1/me/preferences",
+		Summary:     "Get the user's preferences (defaults if none are stored)",
+		Tags:        []string{"preferences"},
+		Security:    surfaceBSec,
+	}, me.getPreferences)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "update-preferences",
+		Method:      http.MethodPatch,
+		Path:        "/v1/me/preferences",
+		Summary:     "Change the given preferences",
+		Tags:        []string{"preferences"},
+		Security:    surfaceBSec,
+	}, me.updatePreferences)
 }

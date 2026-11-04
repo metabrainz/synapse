@@ -6,11 +6,11 @@ Synapse is an internal event fan-out and notification system for MetaBrainz. Int
 
 | Binary | Role |
 |--------|------|
-| `cmd/api` | HTTP management plane — tenant, channel, subscription CRUD + direct event ingestion |
+| `cmd/api` | HTTP management plane — tenant, channel, subscription CRUD, direct event ingestion, and each user's in-app notification inbox and preferences |
 | `cmd/ingest` | Consumes events from RabbitMQ and writes them atomically to Postgres |
 | `cmd/relay` | Polls the Postgres outbox and publishes rows to RabbitMQ with publisher confirms |
 | `cmd/worker` | Consumes from RabbitMQ and delivers to subscriber channels (webhook, Telegram, …) |
-| `cmd/cleanup` | Periodic housekeeping — prunes old events, reconciles stuck deliveries, manages partitions |
+| `cmd/cleanup` | Periodic housekeeping — prunes old events and expired notifications, reconciles stuck deliveries, manages partitions |
 | `cmd/migrate` | Runs database migrations (up, down, force) |
 
 ## Quick start
@@ -65,8 +65,11 @@ The cleanup binary handles periodic maintenance. Run it on a daily cron schedule
 go run ./cmd/cleanup -config config.yaml \
   --event-age 2160h \    # 90 days retention (default)
   --pending-age 1h \     # mark stuck PENDING deliveries as DEAD
-  --retry-age 3h         # mark stuck RETRYING deliveries as DEAD
+  --retry-age 3h \       # mark stuck RETRYING deliveries as DEAD
+  --expired-batch 5000   # delete expired in-app notifications in batches of this size
 ```
+
+It deletes in-app notifications past their `expires_at` (set per tenant by `in_app_retention_days`). The API hides expired notifications as soon as they expire, so how often the job runs only affects how long they occupy the table.
 
 It also creates future monthly partitions for the deliveries table and drops partitions older than the retention window.
 

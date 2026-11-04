@@ -58,3 +58,28 @@ func TestDeliveriesEmptyWhenNoSubscribers(t *testing.T) {
 		t.Fatalf("no subscribers: want 0 deliveries, got %d", len(dels))
 	}
 }
+
+func TestDeliveriesIncludeInAppNotifications(t *testing.T) {
+	e := setup(t)
+
+	resp := e.tenantDo("POST", "/v1/events", map[string]any{
+		"recipients": []string{"user-1", "user-2"},
+		"event_type": "follow",
+		"payload":    map[string]any{"actor": map[string]any{"username": "x", "url": "https://listenbrainz.org/user/x"}},
+	}, e.apiKey)
+	var out map[string]any
+	decodeJSON(t, resp, &out)
+	eventID := int64(out["event_id"].(float64))
+
+	resp2 := e.tenantDo("GET", fmt.Sprintf("/v1/events/%d/deliveries", eventID), nil, e.apiKey)
+	var dels []map[string]any
+	decodeJSON(t, resp2, &dels)
+	if len(dels) != 2 {
+		t.Fatalf("want one in-app result per recipient, got %d", len(dels))
+	}
+	for _, d := range dels {
+		if d["channel_type"] != "in_app" || d["status"] != "DELIVERED" {
+			t.Fatalf("want a DELIVERED in_app result for the tenant, got %v", d)
+		}
+	}
+}

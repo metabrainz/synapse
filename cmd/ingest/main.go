@@ -82,7 +82,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	fan := fanout.New(cache, adapter.MaxAttemptsFor, reg)
+	fan := fanout.New(cache, adapter.MaxAttemptsFor, reg).
+		WithExpiry(fanout.NewExpiry(cfg.TenantInAppRetentionDays()))
 	consumer := ingest.NewConsumer(pool, fan, reg)
 
 	slog.Info("ingest: starting", "workers", cfg.Ingest.Workers, "batch_size", cfg.Ingest.BatchSize, "drain_ms", cfg.Ingest.DrainMs)

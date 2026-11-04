@@ -81,6 +81,15 @@ Slow targets (e.g. a webhook endpoint that takes 9 s to respond) reduce worker t
 
 ---
 
+## Cleanup job stalls or fails
+
+What users see does not depend on cleanup. The API hides a notification as soon as it expires, so a stalled cleanup job never shows users expired notifications. What grows is storage: expired notifications stay in `notifications`, and their events (and old delivery partitions) are kept until cleanup runs again.
+
+- Each notification batch is a single statement, so a failed run changes nothing for that batch and the next run picks it up.
+- Events are deleted only when no notification references them and no delivery is `PENDING` or `RETRYING`, so a failure can never leave a notification without its payload. The foreign key from `notifications` to `events` enforces this in the database.
+- A delivery partition holding a `PENDING` or `RETRYING` row is kept, and each run logs `keeping old partition with unfinished deliveries`. A partition that stays pinned across many runs means a delivery is stuck: check the relay and worker, or let `ReconcileStale` mark it `DEAD` after its age threshold.
+- Recovery needs no action beyond fixing the cause and letting cleanup run; the first run afterwards catches up.
+
 ## PgBouncer
 
 PgBouncer in transaction mode drops session-level state (including `LISTEN` subscriptions) between checkouts. Synapse handles this in two ways:

@@ -17,7 +17,8 @@ RabbitMQ  events.ingest  queue
       ▼
 cmd/ingest  ──── one transaction ────▶  Postgres
                                         ├── events
-                                        ├── deliveries       (one row per subscription)
+                                        ├── notifications    (in-app: one row per recipient, written directly)
+                                        ├── deliveries       (external channels: one row per subscription)
                                         └── outbox           (one row per delivery)
                                                │
                                                │  poll FOR UPDATE SKIP LOCKED
@@ -29,6 +30,8 @@ cmd/ingest  ──── one transaction ────▶  Postgres
                                                                                    cmd/worker ──▶  Channel adapter (webhook / telegram / …)
 ```
 
+Events can also arrive over HTTP (`POST /v1/events`); the API handler runs the same transaction. Internal channels (in-app) stop at the `notifications` row: they have no outbox row, queue or worker. Users then read them through the API. See [In-app notifications](#in-app-notifications).
+
 ---
 
 ## Services
@@ -39,7 +42,7 @@ Serves two authentication surfaces:
 
 **Surface A — tenant API key** (`/v1/events`, `/v1/events/{id}/deliveries`): internal services publish events and query delivery status. Auth is an O(1) map lookup against the static registry loaded at startup — no DB or cache involved. Routes are rate-limited per tenant via a Redis token bucket.
 
-**Surface B — MetaBrainz OAuth token** (`/v1/me/`*): end-users manage their own channels and subscriptions. Each request introspects the bearer token against the MB OAuth endpoint; results are cached in Redis (TTL = min(token expiry, 15 min)) to keep the MB endpoint off the hot path.
+**Surface B — MetaBrainz OAuth token** (`/v1/me/`*): end-users manage their own channels and subscriptions, read their in-app notifications (`/v1/me/tenants/{tenant}/notifications`, `/v1/me/notifications`) and change their preferences (`/v1/me/preferences`). Each request introspects the bearer token against the MB OAuth endpoint; results are cached in Redis (TTL = min(token expiry, 15 min)) to keep the MB endpoint off the hot path.
 
 ### `cmd/ingest` — Ingest consumer
 
@@ -62,7 +65,9 @@ Consumes from the RabbitMQ `deliveries.{type}` queue and dispatches to the targe
 Runs periodically (or once via cron) to prune stale data:
 
 - Marks `PENDING`/`RETRYING` deliveries stuck beyond their age threshold as `DEAD`.
-- Deletes events older than the retention window (cascades to deliveries).
+- Deletes notifications past their `expires_at`, in batches (`--expired-batch`).
+- Deletes events older than `--event-age` that nothing still needs: no notification references them and no delivery is `PENDING` or `RETRYING`.
+- Drops delivery partitions older than `--event-age`, except any that still hold a `PENDING` or `RETRYING` row.
 - Resets `PUBLISHING` outbox rows stuck longer than 5 minutes back to `PENDING`.
 
 ---
@@ -82,6 +87,8 @@ When the ingest consumer processes an event, three conditions must all pass for 
 1. **Tenant-channel mapping** (`user_tenant_channel_mapping`) — has the user assigned an active channel of that type for this tenant?
 2. **Event subscription** (`user_event_subscriptions`) — has the user subscribed to this event type on that channel type? Subscriptions can be exact (`listen`) or wildcard (`*`, matching every event type from that tenant).
 3. **Static registry** — is the `(tenant_id, event_type, channel_type)` combination declared in config? Applied last as a safeguard against stale cache entries referencing channel types removed from config.
+
+Channels that are enabled for everyone (in-app) do not go through gates 1 and 2: fan-out adds one result per recipient for each such channel the event type allows, regardless of mappings, subscriptions or a `users` row. The registry still applies, because the event type must list the channel in `AllowedChannels()`. See [In-app notifications](#in-app-notifications).
 
 Gates 1 and 2 are resolved together in a single SQL JOIN (or an in-memory cache lookup). Gate 3 is applied by the fanout layer via `filterAllowed` after the lookup returns. The subscription cache (below) holds gates 1 and 2 in memory.
 
@@ -157,3 +164,143 @@ UI shows channel as connected
 **Message formatting** — each event type defines a message template in `internal/adapter/telegram/templates.go`. Unknown event types fall back to a plain JSON dump. Templates are compiled at startup; a bad template panics immediately rather than at delivery time.
 
 **Webhook verification** — inbound webhook requests are validated against `X-Telegram-Bot-Api-Secret-Token`. The secret is set when registering the webhook via `setWebhook` at startup.
+
+---
+
+## In-app notifications
+
+In-app notifications are an always-on channel: every recipient of an event gets one, whether or not they have an account, a channel or a subscription in Synapse. A user reads them with their MetaBrainz OAuth token.
+
+### Channels: internal and external
+
+`internal/channel` describes every channel type with two independent properties:
+
+| Property | Question | Values |
+|---|---|---|
+| **Kind** | Where does the result live and how is it produced? | **Internal:** a record in Synapse, written by fan-out in the ingest transaction, with no delivery, outbox, queue or worker. **External:** a call to another system, handled as a delivery by a worker. |
+| **Enablement** | Who gets it? | **Everyone:** every recipient of an event whose type allows the channel. **Subscribed:** only recipients with a matching subscription. |
+
+| Channel | Kind | Enablement |
+|---|---|---|
+| `in_app` | Internal | Everyone |
+| `webhook`, `email`, `telegram` | External | Subscribed |
+
+Channel types not listed in `internal/channel` are external and subscribed. A channel enabled for everyone cannot be created, assigned or subscribed to (422) and is hidden from the event-type catalog. An event type produces notifications only if it lists `eventspec.ChannelInApp` in `AllowedChannels()`; every ListenBrainz event type does except `listen`, which is too high-volume for an inbox.
+
+### Write path
+
+Fan-out has two paths. External channels are unchanged. Internal channels write their record directly in the same transaction as the event.
+
+```mermaid
+flowchart TB
+    T["Tenant publishes an event<br/>HTTP POST /v1/events or RabbitMQ events.ingest"]
+    H["API handler / ingest consumer<br/>validate payload, INSERT event"]
+    R["fanout.resolve, once per event"]
+    T --> H --> R
+
+    subgraph EXT["External channels: webhook, email, telegram"]
+        direction TB
+        S1["Gate: user mapping + subscription<br/>(in-memory cache from user_channels)"]
+        S2["INSERT delivery, status PENDING"]
+        S3["INSERT outbox row"]
+        S4["relay: claim, publish with confirm, delete"]
+        S5[["RabbitMQ deliveries.{type}"]]
+        S6["worker: adapter.Deliver<br/>(HTTP, SMTP, Bot API) with retries"]
+        S7["UPDATE delivery: DELIVERED / RETRYING / DEAD"]
+        S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7
+    end
+
+    subgraph INT["Internal channel: in_app (direct write)"]
+        direction TB
+        I1["internal/channel: Internal + Everyone<br/>every recipient, if the event type allows in_app"]
+        I2["INSERT notification in the same transaction<br/>user, tenant, event, expires_at"]
+        I1 --> I2
+    end
+
+    R --> S1
+    R --> I1
+
+    SK["Skipped for in_app: subscription gate, users and channel rows,<br/>delivery row, outbox, relay, RabbitMQ, worker, status update"]
+    I2 -.-> SK
+
+    PGD[("Postgres deliveries")]
+    PGN[("Postgres notifications")]
+    S2 --> PGD
+    S7 --> PGD
+    I2 --> PGN
+
+    PGN --> API["/v1/me/.../notifications<br/>list, count, read, dismiss (OAuth)"]
+    PGN --> CL["cleanup<br/>deletes expired notifications,<br/>keeps events they still need"]
+
+    classDef skipped stroke-dasharray: 5 5,fill:#f6f6f6,color:#777
+    class SK skipped
+```
+
+- `dry_run` counts notifications as results, so `delivery_count` is the number of notifications plus deliveries.
+- A recipient who has never logged in still gets notifications: no `users` row is needed.
+- If the transaction rolls back, no notification is written.
+
+### Data model
+
+| Table | Holds |
+|---|---|
+| `notifications` | One row per event and recipient: `id`, `event_id`, `user_id`, `tenant_id`, `created_at`, `read_at`, `dismissed_at`, `expires_at`. The payload stays in `events`. |
+| `user_preferences` | One row per user who has changed a preference: `user_id`, `cross_tenant_notifications`. No row means the defaults. |
+
+- `notifications.event_id` references `events(id)`, so an event cannot be deleted while a notification points at it. `UNIQUE (event_id, user_id)` allows one notification per event and recipient.
+- `user_id` has no foreign key to `users`: a recipient can be notified before they ever log in.
+- Indexes serve the inbox (`user_id, id DESC`, per tenant and overall, for undismissed rows), the unread count, and expiry.
+
+### Reading notifications
+
+All routes use the user's OAuth token (Surface B). A notification that is dismissed or past its `expires_at` is never returned, whether or not cleanup has deleted it yet.
+
+Responses return `read_at` (absent while unread); there is no separate `is_read`.
+
+**Tenant routes**, always limited to the tenant in the path:
+
+| Route | Purpose |
+|---|---|
+| `GET /v1/me/tenants/{tenant}/notifications` | Newest first. `limit` (1–100, default 25), `before_id` cursor (use `next_cursor`), `event_type`, `unread=true` |
+| `GET .../notifications/unread-count` | Badge count |
+| `POST .../notifications/{id}/read` | Mark one read (idempotent, keeps the original `read_at`) |
+| `POST .../notifications/read-all` | Mark all of the tenant's unread notifications read |
+| `DELETE .../notifications/{id}` | Dismiss (permanent) |
+
+**Global routes** span every tenant and return 403 unless the user's `cross_tenant_notifications` preference is on:
+
+| Route | Purpose |
+|---|---|
+| `GET /v1/me/notifications` | Newest first across tenants; optional `tenant_id`, `unread`, `limit`, `before_id` |
+| `GET /v1/me/notifications/unread-counts` | `count` and a per-tenant `by_tenant` breakdown |
+| `POST /v1/me/notifications/read-all` | Mark every tenant's unread notifications read |
+| `POST /v1/me/notifications/{id}/read`, `DELETE /v1/me/notifications/{id}` | Read or dismiss any of the user's notifications |
+
+A notification id that belongs to another user, is dismissed or has expired returns 404 on every route. The tenant routes ignore the preference and never touch another tenant's rows.
+
+**Preferences:**
+
+| Route | Purpose |
+|---|---|
+| `GET /v1/me/preferences` | `{"cross_tenant_notifications": false}`; the defaults when the user has no row |
+| `PATCH /v1/me/preferences` | Changes only the fields in the body (creates the row on the first change); unknown fields are rejected (422) |
+
+`cross_tenant_notifications` (default off) is a presentation preference, not an access control. The user's token is not bound to a tenant, so any application holding it can read any tenant's notifications through that tenant's route.
+
+**Tenant view:** `GET /v1/events/{id}/deliveries` (tenant API key) lists each notification as a `DELIVERED` result with `channel_type` `in_app`, next to the external deliveries. Read and dismissed state is not exposed to tenants.
+
+### Expiry
+
+Each notification gets an `expires_at` at fan-out from `tenants.<id>.in_app_retention_days` (30 days if unset). It is frozen on the row, so changing the setting affects only later notifications. Expiry applies whether or not the notification was read.
+
+### Cleanup
+
+`cmd/cleanup` deletes notifications and events separately, and each kind owns its own lifetime:
+
+- **Notifications:** deleted in batches once `expires_at` has passed (`--expired-batch`, default 5000). Notification cleanup never deletes events.
+- **Events:** deleted only when all of these hold: the event is older than `--event-age` (default 90 days, measured from its creation), no notification references it, and no delivery is `PENDING` or `RETRYING`. Event age is the earliest an event may be deleted; live dependents decide whether it is.
+- **Delivery partitions:** an old partition is dropped only if it holds no `PENDING` or `RETRYING` delivery.
+
+So an event lives for `max(--event-age, the longest notification expiry that references it)`. For example, with `--event-age` at 30 days and a tenant keeping notifications for 90 days, the event passes its age on day 30 and is kept because the notification still needs it. On day 90 the notification is deleted and the next run deletes the event.
+
+Event age also bounds the deduplication window: an event row, with its idempotency key, lives at least `--event-age`, so a retried event inside that window is still recognised as a duplicate. The cost is that an event's payload stays until `--event-age` even if its notifications expired earlier.

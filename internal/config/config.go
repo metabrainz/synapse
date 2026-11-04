@@ -36,6 +36,8 @@ type TenantConfig struct {
 	EmailFrom string `yaml:"email_from"`
 	// NotificationSettingsURL is linked from email templates (e.g. manage notifications).
 	NotificationSettingsURL string `yaml:"notification_settings_url"`
+	// InAppRetentionDays: 0 uses the built-in default (fanout.DefaultInAppRetention).
+	InAppRetentionDays int `yaml:"in_app_retention_days"`
 }
 
 type OAuthConfig struct {

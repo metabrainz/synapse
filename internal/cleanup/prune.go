@@ -11,11 +11,15 @@ import (
 
 var partitionedTables = []string{"deliveries"}
 
-// PruneOldEvents deletes events older than age. On partitioned tables,
-// prefer DropOldPartitions instead (O(1), zero vacuum).
+// PruneOldEvents deletes events older than age that nothing still needs: no
+// notification references them and no delivery is PENDING or RETRYING. Age is
+// the earliest an event may go; live dependents decide whether it does.
 func PruneOldEvents(ctx context.Context, pool *pgxpool.Pool, age time.Duration) error {
 	res, err := pool.Exec(ctx,
-		`DELETE FROM events WHERE created_at < $1`,
+		`DELETE FROM events e
+		 WHERE e.created_at < $1
+		   AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.event_id = e.id)
+		   AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.event_id = e.id AND d.status IN ('PENDING', 'RETRYING'))`,
 		time.Now().Add(-age),
 	)
 	if err != nil {
@@ -69,6 +73,19 @@ func DropOldPartitions(ctx context.Context, pool *pgxpool.Pool, age time.Duratio
 		rows.Close()
 
 		for _, partName := range toDrop {
+			// Nothing is inserted into an old partition and a terminal delivery never
+			// becomes non-terminal again, so checking before dropping is not racy.
+			var unfinished bool
+			if err := pool.QueryRow(ctx, fmt.Sprintf(
+				`SELECT EXISTS(SELECT 1 FROM %s WHERE status IN ('PENDING', 'RETRYING'))`, partName,
+			)).Scan(&unfinished); err != nil {
+				slog.Error("cleanup: check partition", "partition", partName, "err", err)
+				continue
+			}
+			if unfinished {
+				slog.Warn("cleanup: keeping old partition with unfinished deliveries", "partition", partName)
+				continue
+			}
 			if _, err := pool.Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s", partName)); err != nil {
 				slog.Error("cleanup: drop partition", "partition", partName, "err", err)
 			} else {
