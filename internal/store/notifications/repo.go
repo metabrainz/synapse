@@ -122,6 +122,27 @@ func (r *Repo) List(ctx context.Context, p ListParams) ([]Notification, int64, e
 	return out, next, nil
 }
 
+// ListByEvent includes expired and dismissed notifications: it records who was notified.
+func (r *Repo) ListByEvent(ctx context.Context, eventID int64) ([]Notification, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, event_id, user_id, tenant_id, created_at, expires_at
+		 FROM notifications WHERE event_id = $1 ORDER BY id`, eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Notification
+	for rows.Next() {
+		var n Notification
+		if err := rows.Scan(&n.ID, &n.EventID, &n.UserID, &n.TenantID, &n.CreatedAt, &n.ExpiresAt); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) UnreadCount(ctx context.Context, userID, tenantID string) (int64, error) {
 	var n int64
 	err := r.pool.QueryRow(ctx,

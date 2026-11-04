@@ -55,7 +55,7 @@ func registerRoutes(
 		Summary:     "List delivery records for an event (tenant-scoped)",
 		Tags:        []string{"events"},
 		Security:    surfaceASec,
-	}, (&deliveriesHandler{pool: pool}).listByEvent)
+	}, (&deliveriesHandler{pool: pool, notifications: inbox}).listByEvent)
 
 	// --- Surface B: MetaBrainz OAuth token ---
 

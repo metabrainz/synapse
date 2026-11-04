@@ -174,4 +174,6 @@ Users read their notifications with their OAuth token (Surface B), scoped by ten
 | `POST .../notifications/read-all` | Mark all read for the tenant |
 | `DELETE .../notifications/{id}` | Dismiss (permanent) |
 
+`GET /v1/events/{id}/deliveries` (the tenant's view of what happened to an event) lists each in-app notification as a `DELIVERED` result with `channel_type` `in_app`, alongside the external deliveries. Read and dismissed state is not exposed to tenants.
+
 An event type must list `eventspec.ChannelInApp` in `AllowedChannels()` to produce notifications; all ListenBrainz events do except `listen`, which is too high-volume for an inbox.
