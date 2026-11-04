@@ -135,3 +135,72 @@ func TestCleanupPruneExpiredNotifications(t *testing.T) {
 		t.Fatal("deleting notifications must not delete events")
 	}
 }
+
+func TestCleanupKeepsEventsThatStillHaveDependents(t *testing.T) {
+	e := setup(t)
+
+	ingest := func(eventType string, payload map[string]any, recipient string) int64 {
+		resp := e.tenantDo("POST", "/v1/events", map[string]any{
+			"recipients": []string{recipient}, "event_type": eventType, "payload": payload,
+		}, e.apiKey)
+		var out map[string]any
+		decodeJSON(t, resp, &out)
+		return int64(out["event_id"].(float64))
+	}
+	exists := func(id int64) bool {
+		var n int
+		e.pool.QueryRow(e.ctx, `SELECT count(*) FROM events WHERE id = $1`, id).Scan(&n)
+		return n == 1
+	}
+	backdate := func(id int64) {
+		e.mustExec(`UPDATE events SET created_at = now() - interval '8 days' WHERE id = $1`, id)
+	}
+	prune := func() {
+		if err := cleanup.PruneOldEvents(e.ctx, e.pool, 7*24*time.Hour); err != nil {
+			t.Fatalf("prune: %v", err)
+		}
+	}
+
+	t.Run("a notification outlives the event retention age", func(t *testing.T) {
+		id := ingest("follow", map[string]any{"actor": map[string]any{"username": "x", "url": "https://listenbrainz.org/user/x"}}, "alice")
+		backdate(id)
+		prune()
+		if !exists(id) {
+			t.Fatal("event pruned while a notification still references it")
+		}
+		e.mustExec(`UPDATE notifications SET expires_at = now() - interval '1 minute' WHERE event_id = $1`, id)
+		if _, err := cleanup.PruneExpired(e.ctx, e.pool, 100); err != nil {
+			t.Fatal(err)
+		}
+		prune()
+		if exists(id) {
+			t.Fatal("event kept after its last notification expired and was deleted")
+		}
+	})
+
+	t.Run("an unfinished delivery holds the event until it is terminal", func(t *testing.T) {
+		e.setupWebhookChannel(testTenantID, "user-1", "listen", "https://example.com/hook")
+		e.waitForCacheWarm(e.apiKey, "user-1", "listen")
+		id := ingest("listen", testListenPayload(), "user-1")
+		backdate(id)
+		for _, status := range []string{"PENDING", "RETRYING"} {
+			e.mustExec(`UPDATE deliveries SET status = $2 WHERE event_id = $1`, id, status)
+			prune()
+			if !exists(id) {
+				t.Fatalf("event pruned while a delivery is %s", status)
+			}
+		}
+		e.mustExec(`UPDATE deliveries SET status = 'DELIVERED' WHERE event_id = $1`, id)
+		prune()
+		if exists(id) {
+			t.Fatal("event kept after its delivery became terminal")
+		}
+	})
+
+	t.Run("the database refuses to delete an event a notification references", func(t *testing.T) {
+		id := ingest("follow", map[string]any{"actor": map[string]any{"username": "x", "url": "https://listenbrainz.org/user/x"}}, "alice")
+		if _, err := e.pool.Exec(e.ctx, `DELETE FROM events WHERE id = $1`, id); err == nil {
+			t.Fatal("want a foreign key violation")
+		}
+	})
+}

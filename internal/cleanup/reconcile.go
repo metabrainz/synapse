@@ -1,7 +1,8 @@
-// Package cleanup provides two maintenance jobs:
+// Package cleanup provides the maintenance jobs:
 //   - ReconcileStale: marks stuck deliveries (PENDING/RETRYING past their age thresholds) as DEAD.
-//   - PruneOldEvents: deletes events older than a configured retention window,
-//     cascading to their deliveries via the FK relationship.
+//   - PruneExpired: deletes notifications past their expires_at.
+//   - PruneOldEvents: deletes events past a retention window that no notification
+//     or unfinished delivery still needs.
 //
 // The cleanup binary runs these on a configurable schedule (or once and exit).
 package cleanup
