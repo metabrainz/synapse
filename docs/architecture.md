@@ -177,3 +177,5 @@ Users read their notifications with their OAuth token (Surface B), scoped by ten
 `GET /v1/events/{id}/deliveries` (the tenant's view of what happened to an event) lists each in-app notification as a `DELIVERED` result with `channel_type` `in_app`, alongside the external deliveries. Read and dismissed state is not exposed to tenants.
 
 An event type must list `eventspec.ChannelInApp` in `AllowedChannels()` to produce notifications; all ListenBrainz events do except `listen`, which is too high-volume for an inbox.
+
+Per-user preferences live in `user_preferences` and are read and changed with `GET` and `PATCH /v1/me/preferences` (no row means the defaults; the first `PATCH` creates it). The first preference is `cross_tenant_notifications` (default off), a presentation setting for the inbox.

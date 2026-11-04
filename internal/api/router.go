@@ -21,6 +21,7 @@ import (
 	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/ratelimit"
 	"github.com/metabrainz/synapse/internal/store/notifications"
+	"github.com/metabrainz/synapse/internal/store/preferences"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
 	"github.com/metabrainz/synapse/internal/store/usereventsubs"
 	"github.com/metabrainz/synapse/internal/store/users"
@@ -48,6 +49,7 @@ type Deps struct {
 	TenantMappings *usertenant.Repo
 	Subscriptions  *usereventsubs.Repo
 	Notifications  *notifications.Repo
+	Preferences    *preferences.Repo
 	Fanout         *fanout.Fanout
 	Registry       *eventtype.Registry
 }
@@ -167,7 +169,7 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 		},
 	}
 
-	registerRoutes(api, d.Pool, d.Fanout, d.Registry, d.UserChannels, d.TenantMappings, d.Subscriptions, d.Notifications)
+	registerRoutes(api, d.Pool, d.Fanout, d.Registry, d.UserChannels, d.TenantMappings, d.Subscriptions, d.Notifications, d.Preferences)
 
 	for _, ct := range adapter.ChannelTypes() {
 		if rp, ok := adapter.Registry[ct].(adapter.RouteProvider); ok {

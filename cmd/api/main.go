@@ -22,6 +22,7 @@ import (
 	"github.com/metabrainz/synapse/internal/ratelimit"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/notifications"
+	"github.com/metabrainz/synapse/internal/store/preferences"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
 	"github.com/metabrainz/synapse/internal/store/usereventsubs"
@@ -69,6 +70,7 @@ func main() {
 	tenantMappings := usertenant.New(pool)
 	eventSubs := usereventsubs.New(pool)
 	inbox := notifications.New(pool)
+	prefs := preferences.New(pool)
 
 	var introspector oauth.Introspector
 	if cfg.OAuth.IntrospectionURL != "" && cfg.OAuth.ClientID != "" {
@@ -153,6 +155,7 @@ func main() {
 			TenantMappings: tenantMappings,
 			Subscriptions:  eventSubs,
 			Notifications:  inbox,
+			Preferences:    prefs,
 			Fanout:         fan,
 			Registry:       reg,
 		},

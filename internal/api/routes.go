@@ -14,6 +14,7 @@ import (
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/store/notifications"
+	"github.com/metabrainz/synapse/internal/store/preferences"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
 	"github.com/metabrainz/synapse/internal/store/usereventsubs"
 	"github.com/metabrainz/synapse/internal/store/usertenant"
@@ -33,6 +34,7 @@ func registerRoutes(
 	tenantMappings *usertenant.Repo,
 	subscriptions *usereventsubs.Repo,
 	inbox *notifications.Repo,
+	prefs *preferences.Repo,
 ) {
 	// --- Surface A: tenant API key ---
 
@@ -64,6 +66,7 @@ func registerRoutes(
 		tenantMappings: tenantMappings,
 		subscriptions:  subscriptions,
 		notifications:  inbox,
+		preferences:    prefs,
 		reg:            reg,
 	}
 
@@ -223,4 +226,23 @@ func registerRoutes(
 		DefaultStatus: http.StatusNoContent,
 		Security:      surfaceBSec,
 	}, me.dismissNotification)
+
+	// Preferences — per-user settings about how the inbox is presented.
+	huma.Register(api, huma.Operation{
+		OperationID: "get-preferences",
+		Method:      http.MethodGet,
+		Path:        "/v1/me/preferences",
+		Summary:     "Get the user's preferences (defaults if none are stored)",
+		Tags:        []string{"preferences"},
+		Security:    surfaceBSec,
+	}, me.getPreferences)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "update-preferences",
+		Method:      http.MethodPatch,
+		Path:        "/v1/me/preferences",
+		Summary:     "Change the given preferences",
+		Tags:        []string{"preferences"},
+		Security:    surfaceBSec,
+	}, me.updatePreferences)
 }
