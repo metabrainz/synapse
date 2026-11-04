@@ -99,3 +99,39 @@ func TestCleanupPruneOldEvents(t *testing.T) {
 		t.Fatalf("want 1 event remaining, got %d", count)
 	}
 }
+
+func TestCleanupPruneExpiredNotifications(t *testing.T) {
+	e := setup(t)
+
+	var eventID int64
+	for range 3 {
+		resp := e.tenantDo("POST", "/v1/events", map[string]any{
+			"recipients": []string{"alice"},
+			"event_type": "follow",
+			"payload":    map[string]any{"actor": map[string]any{"username": "x", "url": "https://listenbrainz.org/user/x"}},
+		}, e.apiKey)
+		var out map[string]any
+		decodeJSON(t, resp, &out)
+		eventID = int64(out["event_id"].(float64))
+	}
+	// Expire two of the three; a batch size of 1 forces more than one batch.
+	e.mustExec(`UPDATE notifications SET expires_at = now() - interval '1 minute'
+		WHERE id IN (SELECT id FROM notifications ORDER BY id LIMIT 2)`)
+
+	n, err := cleanup.PruneExpired(e.ctx, e.pool, 1)
+	if err != nil {
+		t.Fatalf("prune expired: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("want 2 notifications deleted, got %d", n)
+	}
+	var left, events int
+	e.pool.QueryRow(e.ctx, `SELECT count(*) FROM notifications`).Scan(&left)
+	e.pool.QueryRow(e.ctx, `SELECT count(*) FROM events WHERE id = $1`, eventID).Scan(&events)
+	if left != 1 {
+		t.Fatalf("want the unexpired notification to remain, got %d", left)
+	}
+	if events != 1 {
+		t.Fatal("deleting notifications must not delete events")
+	}
+}

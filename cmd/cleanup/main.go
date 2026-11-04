@@ -19,6 +19,7 @@ func main() {
 	cfgPath := flag.String("config", "config.yaml", "path to config file")
 	interval := flag.Duration("interval", 0, "run continuously at this interval (0 = run once and exit)")
 	eventAge := flag.Duration("event-age", 90*24*time.Hour, "delete events older than this (default 90 days)")
+	expiredBatch := flag.Int("expired-batch", 5000, "delete expired notifications in batches of this size")
 	pendingAge := flag.Duration("pending-age", time.Hour, "mark PENDING deliveries as DEAD after this (default 1h)")
 	retryAge := flag.Duration("retry-age", 3*time.Hour, "mark RETRYING deliveries as DEAD after this (default 3h)")
 	flag.Parse()
@@ -45,6 +46,9 @@ func main() {
 		}
 		if err := cleanup.DropOldPartitions(ctx, pool, *eventAge); err != nil {
 			slog.Error("cleanup: drop old partitions", "err", err)
+		}
+		if _, err := cleanup.PruneExpired(ctx, pool, *expiredBatch); err != nil {
+			slog.Error("cleanup: prune expired notifications", "err", err)
 		}
 		if err := cleanup.PruneOldEvents(ctx, pool, *eventAge); err != nil {
 			slog.Error("cleanup: prune", "err", err)
