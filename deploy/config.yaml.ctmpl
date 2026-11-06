@@ -82,5 +82,6 @@ tenants:
     api_key: "{{ template "KEY" "tenants_listenbrainz_api_key" }}"
     email_from: "{{ template "OPTKEY" "tenants_listenbrainz_email_from" }}"
     notification_settings_url: "{{ template "OPTKEY" "tenants_listenbrainz_notification_settings_url" }}"
-    in_app_retention_days: 30
-    stream_origins: ["https://listenbrainz.org"]
+    in_app_retention_days: {{ keyOrDefault (printf "docker-server-configs/Synapse/config.%s.json/tenants_listenbrainz_in_app_retention_days" (env "DEPLOY_ENV")) "30" }}
+    # Comma-separated, no spaces: "https://beta.listenbrainz.org,https://test.listenbrainz.org".
+    stream_origins: {{ keyOrDefault (printf "docker-server-configs/Synapse/config.%s.json/tenants_listenbrainz_stream_origins" (env "DEPLOY_ENV")) "https://listenbrainz.org" | split "," | toJSON }}
