@@ -18,6 +18,7 @@ import (
 	"github.com/metabrainz/synapse/internal/api/middleware"
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/live"
 	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/ratelimit"
 	"github.com/metabrainz/synapse/internal/store/notifications"
@@ -52,6 +53,7 @@ type Deps struct {
 	Preferences    *preferences.Repo
 	Fanout         *fanout.Fanout
 	Registry       *eventtype.Registry
+	Live           *live.Publisher
 }
 
 // NewRouter wires all HTTP routes and returns the root handler.
@@ -172,7 +174,7 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 		},
 	}
 
-	registerRoutes(api, d.Pool, d.Fanout, d.Registry, d.UserChannels, d.TenantMappings, d.Subscriptions, d.Notifications, d.Preferences)
+	registerRoutes(api, d.Pool, d.Fanout, d.Registry, d.UserChannels, d.TenantMappings, d.Subscriptions, d.Notifications, d.Preferences, d.Live)
 
 	for _, ct := range adapter.ChannelTypes() {
 		if rp, ok := adapter.Registry[ct].(adapter.RouteProvider); ok {

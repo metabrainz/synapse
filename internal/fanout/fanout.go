@@ -13,6 +13,7 @@ import (
 
 	"github.com/metabrainz/synapse/internal/channel"
 	"github.com/metabrainz/synapse/internal/eventtype"
+	"github.com/metabrainz/synapse/internal/live"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/deliveries"
 	"github.com/metabrainz/synapse/internal/store/events"
@@ -106,10 +107,22 @@ func (f *Fanout) resolve(ctx context.Context, tenantID, eventType string, recipi
 	return withEveryoneChannels(filterAllowed(subs, allowed), recipients, allowed), nil
 }
 
+// InboxRecipient is a user who got an in-app notification row in a tenant.
+type InboxRecipient struct{ UserID, TenantID string }
+
+// CreatedNudges returns one "created" live nudge per recipient.
+func CreatedNudges(rs []InboxRecipient) []live.Target {
+	ts := make([]live.Target, len(rs))
+	for i, r := range rs {
+		ts[i] = live.Target{UserID: r.UserID, Nudge: live.Nudge{Kind: live.KindCreated, Tenant: r.TenantID}}
+	}
+	return ts
+}
+
 // Fan creates one delivery and one outbox row per active subscription matching ev,
 // and one notification per recipient if the event type allows in-app.
-// Returns the number of results created.
-func (f *Fanout) Fan(ctx context.Context, q store.Querier, ev events.Event) (int, error) {
+// Returns the number of results created and the users who got an inbox row.
+func (f *Fanout) Fan(ctx context.Context, q store.Querier, ev events.Event) (int, []InboxRecipient, error) {
 	return f.FanBatch(ctx, q, []events.Event{ev})
 }
 
@@ -120,7 +133,8 @@ func (f *Fanout) Fan(ctx context.Context, q store.Querier, ev events.Event) (int
 // every outbox row in a second InsertBatch call. Notifications for internal
 // channels are written in one extra call. Must be called inside a
 // store.WithTx callback — all writes are atomic with the upstream event inserts.
-func (f *Fanout) FanBatch(ctx context.Context, q store.Querier, evs []events.Event) (int, error) {
+// The returned inbox recipients are deduplicated by (user, tenant).
+func (f *Fanout) FanBatch(ctx context.Context, q store.Querier, evs []events.Event) (int, []InboxRecipient, error) {
 	// target represents one planned delivery: a single (event, subscription) pair.
 	type target struct {
 		ev          events.Event
@@ -131,11 +145,13 @@ func (f *Fanout) FanBatch(ctx context.Context, q store.Querier, evs []events.Eve
 	// Resolve all subscriptions in memory before touching the DB.
 	var targets []target
 	var inbox []notifications.Entry
+	var recipients []InboxRecipient
+	seen := map[InboxRecipient]struct{}{}
 	now := time.Now()
 	for _, ev := range evs {
 		subs, err := f.resolve(ctx, ev.TenantID, ev.EventType, ev.Recipients)
 		if err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 		for _, sub := range subs {
 			if channel.Of(sub.ChannelType).Kind == channel.Internal {
@@ -145,6 +161,11 @@ func (f *Fanout) FanBatch(ctx context.Context, q store.Querier, evs []events.Eve
 					TenantID:  ev.TenantID,
 					ExpiresAt: now.Add(f.expiry.For(ev.TenantID)),
 				})
+				r := InboxRecipient{UserID: sub.UserID, TenantID: ev.TenantID}
+				if _, ok := seen[r]; !ok {
+					seen[r] = struct{}{}
+					recipients = append(recipients, r)
+				}
 				continue
 			}
 			targets = append(targets, target{ev, sub, f.maxAttempts(sub.ChannelType)})
@@ -153,11 +174,11 @@ func (f *Fanout) FanBatch(ctx context.Context, q store.Querier, evs []events.Eve
 
 	if len(inbox) > 0 {
 		if err := notifications.InsertBatch(ctx, q, inbox); err != nil {
-			return 0, fmt.Errorf("batch insert notifications: %w", err)
+			return 0, nil, fmt.Errorf("batch insert notifications: %w", err)
 		}
 	}
 	if len(targets) == 0 {
-		return len(inbox), nil
+		return len(inbox), recipients, nil
 	}
 
 	// Round 1: insert all delivery records in one query; returned IDs are
@@ -174,7 +195,7 @@ func (f *Fanout) FanBatch(ctx context.Context, q store.Querier, evs []events.Eve
 	}
 	deliveryIDs, err := deliveries.InsertBatch(ctx, q, ds)
 	if err != nil {
-		return 0, fmt.Errorf("batch insert deliveries: %w", err)
+		return 0, nil, fmt.Errorf("batch insert deliveries: %w", err)
 	}
 
 	// Round 2: build outbox payloads embedding the delivery IDs, then insert.
@@ -184,15 +205,15 @@ func (f *Fanout) FanBatch(ctx context.Context, q store.Querier, evs []events.Eve
 		routingKeys[i] = target.sub.ChannelType
 		raw, err := json.Marshal(newWorkerMessage(deliveryIDs[i], target.ev, target.sub, target.maxAttempts))
 		if err != nil {
-			return 0, fmt.Errorf("marshal worker message (channel %d): %w", target.sub.ChannelID, err)
+			return 0, nil, fmt.Errorf("marshal worker message (channel %d): %w", target.sub.ChannelID, err)
 		}
 		payloads[i] = raw
 	}
 	if err := outbox.InsertBatch(ctx, q, routingKeys, payloads); err != nil {
-		return 0, fmt.Errorf("batch insert outbox: %w", err)
+		return 0, nil, fmt.Errorf("batch insert outbox: %w", err)
 	}
 
-	return len(targets) + len(inbox), nil
+	return len(targets) + len(inbox), recipients, nil
 }
 
 // withEveryoneChannels adds one result per recipient for each channel enabled for

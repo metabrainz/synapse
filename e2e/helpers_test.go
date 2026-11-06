@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/metabrainz/synapse/internal/adapter"
 	"github.com/metabrainz/synapse/internal/api"
@@ -25,6 +26,7 @@ import (
 	"github.com/metabrainz/synapse/internal/config"
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/live"
 	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/notifications"
@@ -49,6 +51,7 @@ type env struct {
 	ctx     context.Context
 	t       *testing.T
 	pool    *pgxpool.Pool
+	rdb     *redis.Client
 	server  *httptest.Server
 	amqpURL string
 	apiKey  string              // static tenant API key for testTenantID
@@ -149,6 +152,7 @@ func setup(t *testing.T) *env {
 			Preferences:    preferences.New(pool),
 			Fanout:         fan,
 			Registry:       reg,
+			Live:           live.NewPublisher(rdb),
 		},
 	)
 
@@ -165,6 +169,7 @@ func setup(t *testing.T) *env {
 		ctx:     ctx,
 		t:       t,
 		pool:    pool,
+		rdb:     rdb,
 		server:  srv,
 		amqpURL: amqpURL,
 		apiKey:  testAPIKey,

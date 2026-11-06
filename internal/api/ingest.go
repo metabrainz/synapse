@@ -12,6 +12,7 @@ import (
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/ingest"
+	"github.com/metabrainz/synapse/internal/live"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/events"
 )
@@ -20,6 +21,7 @@ type ingestHandler struct {
 	pool *pgxpool.Pool
 	fan  *fanout.Fanout
 	reg  *eventtype.Registry
+	live *live.Publisher
 }
 
 type ingestRequestBody struct {
@@ -82,6 +84,7 @@ func (h *ingestHandler) handle(ctx context.Context, input *ingestInput) (*ingest
 	// No Redis pre-check — the ingest consumer already proves PG-only dedup works.
 	var eventID int64
 	var deliveryCount int
+	var inbox []fanout.InboxRecipient
 	err := store.WithTx(ctx, h.pool, func(q store.Querier) error {
 		ev := events.Event{
 			TenantID:       tenant.ID,
@@ -95,11 +98,12 @@ func (h *ingestHandler) handle(ctx context.Context, input *ingestInput) (*ingest
 			return err
 		}
 		eventID = ev.ID
-		count, err := h.fan.Fan(ctx, q, ev)
+		count, recipients, err := h.fan.Fan(ctx, q, ev)
 		if err != nil {
 			return err
 		}
 		deliveryCount = count
+		inbox = recipients
 		return nil
 	})
 	if err != nil {
@@ -111,6 +115,8 @@ func (h *ingestHandler) handle(ctx context.Context, input *ingestInput) (*ingest
 		}
 		return nil, huma.Error500InternalServerError("event ingestion failed")
 	}
+
+	h.live.PublishMany(ctx, fanout.CreatedNudges(inbox))
 
 	return &ingestOutput{Status: 202, Body: ingestResponseBody{EventID: &eventID, DeliveryCount: &deliveryCount}}, nil
 }

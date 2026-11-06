@@ -17,6 +17,7 @@ import (
 	"github.com/metabrainz/synapse/internal/config"
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/live"
 	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/observability"
 	"github.com/metabrainz/synapse/internal/ratelimit"
@@ -158,6 +159,7 @@ func main() {
 			Preferences:    prefs,
 			Fanout:         fan,
 			Registry:       reg,
+			Live:           live.NewPublisher(rdb),
 		},
 	)
 

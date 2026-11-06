@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/live"
 	"github.com/metabrainz/synapse/internal/store/notifications"
 	"github.com/metabrainz/synapse/internal/store/preferences"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
@@ -35,10 +36,11 @@ func registerRoutes(
 	subscriptions *usereventsubs.Repo,
 	inbox *notifications.Repo,
 	prefs *preferences.Repo,
+	pub *live.Publisher,
 ) {
 	// --- Surface A: tenant API key ---
 
-	ing := &ingestHandler{pool: pool, fan: fan, reg: reg}
+	ing := &ingestHandler{pool: pool, fan: fan, reg: reg, live: pub}
 
 	huma.Register(api, huma.Operation{
 		OperationID:   "ingest-event",

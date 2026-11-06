@@ -14,9 +14,11 @@ import (
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/ingest"
+	"github.com/metabrainz/synapse/internal/live"
 	"github.com/metabrainz/synapse/internal/observability"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -84,7 +86,11 @@ func main() {
 
 	fan := fanout.New(cache, adapter.MaxAttemptsFor, reg).
 		WithExpiry(fanout.NewExpiry(cfg.TenantInAppRetentionDays()))
-	consumer := ingest.NewConsumer(pool, fan, reg)
+	// No ping: publishing is best-effort, ingest must not depend on Redis.
+	rdb := redis.NewClient(&redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB})
+	defer rdb.Close()
+
+	consumer := ingest.NewConsumer(pool, fan, reg, live.NewPublisher(rdb))
 
 	slog.Info("ingest: starting", "workers", cfg.Ingest.Workers, "batch_size", cfg.Ingest.BatchSize, "drain_ms", cfg.Ingest.DrainMs)
 
