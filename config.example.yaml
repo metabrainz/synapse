@@ -72,3 +72,4 @@ tenants:
     email_from: "noreply@listenbrainz.org"
     notification_settings_url: "https://listenbrainz.org/settings/notifications"
     in_app_retention_days: 30  # days an in-app notification stays visible (default 30); cleanup deletes it afterwards
+    stream_origins: ["https://listenbrainz.org"]  # browser origins allowed to open the live inbox stream

@@ -39,6 +39,10 @@ type Config struct {
 	Introspector oauth.Introspector
 	Health       HealthChecks
 	Limiter      *ratelimit.Limiter
+	// StreamOrigins maps a tenant to the browser origins allowed to open its stream.
+	StreamOrigins map[string][]string
+	// StreamPing is the stream keep-alive interval; 0 means 25s.
+	StreamPing time.Duration
 }
 
 // Deps bundles the data-layer dependencies injected into the router.
@@ -55,6 +59,7 @@ type Deps struct {
 	Registry       *eventtype.Registry
 	Live           *live.Publisher
 	Tickets        *live.Tickets
+	Hub            *live.Hub
 }
 
 // NewRouter wires all HTTP routes and returns the root handler.
@@ -89,8 +94,9 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 	}
 
 	// Path-dispatching middleware: applies Surface A or B auth + rate limiting based on
-	// URL prefix. /v1/me/** → Surface B (OAuth); /v1/** → Surface A (tenant API key);
-	// everything else (health check, internal adapter routes) passes through unauthenticated.
+	// URL prefix. /v1/me/** → Surface B (OAuth); /v1/stream/** authenticates with a
+	// ticket in its handler; /v1/** → Surface A (tenant API key); everything else
+	// (health check, internal adapter routes) passes through unauthenticated.
 	//
 	// Auth runs before rate limiting so the rate-limit key function can read the
 	// tenant/user ID set in context by auth.
@@ -119,6 +125,8 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 			switch {
 			case strings.HasPrefix(p, "/v1/me"):
 				surfaceB.ServeHTTP(w, r)
+			case strings.HasPrefix(p, "/v1/stream/"):
+				next.ServeHTTP(w, r)
 			case strings.HasPrefix(p, "/v1/"):
 				surfaceA.ServeHTTP(w, r)
 			default:
@@ -145,6 +153,14 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+
+	ping := cfg.StreamPing
+	if ping == 0 {
+		ping = 25 * time.Second
+	}
+	stream := &streamHandler{hub: d.Hub, tickets: d.Tickets, prefs: d.Preferences, reg: d.Registry, origins: cfg.StreamOrigins, ping: ping}
+	r.Get("/v1/stream/tenants/{tenant_id}/notifications", stream.tenant)
+	r.Get("/v1/stream/notifications", stream.global)
 
 	// Huma API — generates OpenAPI spec from handler types.
 	// Spec: GET /openapi.json   Swagger UI: GET /docs

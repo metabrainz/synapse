@@ -140,13 +140,17 @@ func main() {
 		limiter = ratelimit.New(rdb, cfg.RateLimit.Burst, cfg.RateLimit.RatePerSec)
 	}
 
+	hub := live.NewHub(rdb)
+	go hub.Run(ctx)
+
 	router := api.NewRouter(
 		api.Config{
 			Introspector: introspector,
 			Health: api.HealthChecks{
 				Redis: func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
 			},
-			Limiter: limiter,
+			Limiter:       limiter,
+			StreamOrigins: cfg.TenantStreamOrigins(),
 		},
 		api.Deps{
 			Pool:           pool,
@@ -161,6 +165,7 @@ func main() {
 			Registry:       reg,
 			Live:           live.NewPublisher(rdb),
 			Tickets:        live.NewTickets(rdb),
+			Hub:            hub,
 		},
 	)
 
@@ -171,6 +176,8 @@ func main() {
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
+	// Ends open streams so Shutdown isn't held up waiting for them.
+	srv.RegisterOnShutdown(hub.Close)
 
 	go func() {
 		slog.Info("api: listening", "addr", srv.Addr)

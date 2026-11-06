@@ -83,3 +83,4 @@ tenants:
     email_from: "{{ template "OPTKEY" "tenants_listenbrainz_email_from" }}"
     notification_settings_url: "{{ template "OPTKEY" "tenants_listenbrainz_notification_settings_url" }}"
     in_app_retention_days: 30
+    stream_origins: ["https://listenbrainz.org"]
