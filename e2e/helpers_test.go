@@ -160,7 +160,6 @@ func setup(t *testing.T) *env {
 			Fanout:         fan,
 			Registry:       reg,
 			Live:           live.NewPublisher(rdb),
-			Tickets:        live.NewTickets(rdb),
 			Hub:            hub,
 		},
 	)

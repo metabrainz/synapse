@@ -164,7 +164,6 @@ func main() {
 			Fanout:         fan,
 			Registry:       reg,
 			Live:           live.NewPublisher(rdb),
-			Tickets:        live.NewTickets(rdb),
 			Hub:            hub,
 		},
 	)

@@ -271,27 +271,3 @@ func (h *meHandler) dismissAnyTenant(ctx context.Context, input *globalNotificat
 	}
 	return h.update(ctx, uid, "", input.ID, h.notifications.Dismiss, "dismiss failed")
 }
-
-// POST /v1/me/notifications/stream-ticket
-
-type streamTicketOutput struct {
-	Body struct {
-		Ticket    string `json:"ticket" doc:"Single-use ticket; pass it to a stream route as ?ticket="`
-		ExpiresIn int    `json:"expires_in" doc:"Seconds until the ticket expires"`
-	}
-}
-
-func (h *meHandler) createStreamTicket(ctx context.Context, _ *struct{}) (*streamTicketOutput, error) {
-	uid := middleware.UserFromContext(ctx)
-	if uid == "" {
-		return nil, huma.Error401Unauthorized("unauthenticated")
-	}
-	ticket, err := h.tickets.Mint(ctx, uid)
-	if err != nil {
-		return nil, huma.Error503ServiceUnavailable("stream unavailable")
-	}
-	out := &streamTicketOutput{}
-	out.Body.Ticket = ticket
-	out.Body.ExpiresIn = int(live.TicketTTL.Seconds())
-	return out, nil
-}

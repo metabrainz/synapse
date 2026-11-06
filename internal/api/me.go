@@ -18,5 +18,4 @@ type meHandler struct {
 	preferences    *preferences.Repo
 	reg            *eventtype.Registry
 	live           *live.Publisher
-	tickets        *live.Tickets
 }

@@ -44,7 +44,7 @@ type Config struct {
 	// StreamPing is the stream keep-alive interval; 0 means 25s.
 	StreamPing time.Duration
 	// StreamLifetime is how long a stream stays open before the client must
-	// reconnect with a new ticket; 0 means 15m, matching the OAuth introspection cache.
+	// reconnect; 0 means 15m, matching the OAuth introspection cache.
 	StreamLifetime time.Duration
 }
 
@@ -61,7 +61,6 @@ type Deps struct {
 	Fanout         *fanout.Fanout
 	Registry       *eventtype.Registry
 	Live           *live.Publisher
-	Tickets        *live.Tickets
 	Hub            *live.Hub
 }
 
@@ -165,7 +164,7 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 	if lifetime == 0 {
 		lifetime = 15 * time.Minute
 	}
-	stream := &streamHandler{hub: d.Hub, tickets: d.Tickets, prefs: d.Preferences, reg: d.Registry, origins: cfg.StreamOrigins, ping: ping, lifetime: lifetime}
+	stream := &streamHandler{hub: d.Hub, prefs: d.Preferences, reg: d.Registry, origins: cfg.StreamOrigins, ping: ping, lifetime: lifetime}
 	for _, rt := range []struct {
 		path string
 		h    http.HandlerFunc
@@ -206,7 +205,7 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 		},
 	}
 
-	registerRoutes(api, d.Pool, d.Fanout, d.Registry, d.UserChannels, d.TenantMappings, d.Subscriptions, d.Notifications, d.Preferences, d.Live, d.Tickets)
+	registerRoutes(api, d.Pool, d.Fanout, d.Registry, d.UserChannels, d.TenantMappings, d.Subscriptions, d.Notifications, d.Preferences, d.Live)
 
 	for _, ct := range adapter.ChannelTypes() {
 		if rp, ok := adapter.Registry[ct].(adapter.RouteProvider); ok {

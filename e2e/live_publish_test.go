@@ -247,27 +247,3 @@ func TestMutationNotFoundNoNudge(t *testing.T) {
 	}
 	expectNoNudge(t, nudges)
 }
-
-func TestStreamTicketRoute(t *testing.T) {
-	e := setup(t)
-	e.stub.grant("tok-alice", "alice")
-
-	r := e.userDo("POST", "/v1/me/notifications/stream-ticket", nil, "tok-alice")
-	var out struct {
-		Ticket    string `json:"ticket"`
-		ExpiresIn int    `json:"expires_in"`
-	}
-	decodeJSON(t, r, &out)
-	if r.StatusCode != http.StatusOK || out.ExpiresIn != 30 {
-		t.Fatalf("want 200 with expires_in 30, got %d / %d", r.StatusCode, out.ExpiresIn)
-	}
-	if uid, err := live.NewTickets(e.rdb).Redeem(e.ctx, out.Ticket); err != nil || uid != "alice" {
-		t.Fatalf("redeem: got %q, %v", uid, err)
-	}
-
-	r = e.do("POST", "/v1/me/notifications/stream-ticket", nil, nil)
-	r.Body.Close()
-	if r.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("no token: want 401, got %d", r.StatusCode)
-	}
-}
