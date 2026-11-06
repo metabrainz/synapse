@@ -39,13 +39,14 @@ How Synapse behaves when its dependencies degrade or go down.
 
 ## Redis goes down
 
-Redis is used for rate limiting, OAuth token caching, and Telegram channel linking. All fail open.
+Redis is used for rate limiting, OAuth token caching, Telegram channel linking and inbox live updates. All fail open.
 
 | Feature                   | Behaviour when Redis is down                                                                                                                                                                                               |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Rate limiting**         | `Allow()` returns an error → middleware lets the request through. Traffic is unthrottled until Redis recovers.                                                                                                             |
 | **OAuth token cache**     | Cache miss on every request → every Surface B call hits the MB introspection endpoint directly. MB becomes the bottleneck. Fails open: requests still succeed as long as MB is reachable.                                  |
 | **Telegram rate limiting** | Per-chat and global token buckets fail open → Telegram API may reject with 429, triggering the normal retry flow.                                                                                                         |
+| **Inbox live updates**    | Open streams end; clients back off and retry with a new ticket, and minting returns 503 until Redis is back. Publishes fail after at most 500 ms and are logged, never failing the ingest or the request. Inboxes stay correct, they just update on the client's next refetch. |
 
 **Idempotency** is handled by the PostgreSQL unique constraint on `(tenant_id, idempotency_key)`. Duplicate requests hit the constraint and return a `200` response with the original event ID.
 

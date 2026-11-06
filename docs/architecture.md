@@ -42,7 +42,9 @@ Serves two authentication surfaces:
 
 **Surface A — tenant API key** (`/v1/events`, `/v1/events/{id}/deliveries`): internal services publish events and query delivery status. Auth is an O(1) map lookup against the static registry loaded at startup — no DB or cache involved. Routes are rate-limited per tenant via a Redis token bucket.
 
-**Surface B — MetaBrainz OAuth token** (`/v1/me/`*): end-users manage their own channels and subscriptions, read their in-app notifications (`/v1/me/tenants/{tenant}/notifications`, `/v1/me/notifications`) and change their preferences (`/v1/me/preferences`). Each request introspects the bearer token against the MB OAuth endpoint; results are cached in Redis (TTL = min(token expiry, 15 min)) to keep the MB endpoint off the hot path.
+**Surface B — MetaBrainz OAuth token** (`/v1/me/`*): end-users manage their own channels and subscriptions, read their in-app notifications (`/v1/me/tenants/{tenant}/notifications`, `/v1/me/notifications`) change their preferences (`/v1/me/preferences`) and mint stream tickets (`/v1/me/notifications/stream-ticket`). Each request introspects the bearer token against the MB OAuth endpoint; results are cached in Redis (TTL = min(token expiry, 15 min)) to keep the MB endpoint off the hot path.
+
+**Stream routes** (`/v1/stream/`*): browser event streams for the inbox. `EventSource` cannot send an `Authorization` header, so they authenticate with a single-use ticket minted on Surface B instead. See [Live updates](#live-updates).
 
 ### `cmd/ingest` — Ingest consumer
 
@@ -286,6 +288,38 @@ A notification id that belongs to another user, is dismissed or has expired retu
 | `PATCH /v1/me/preferences` | Changes only the fields in the body (creates the row on the first change); unknown fields are rejected (422) |
 
 `cross_tenant_notifications` (default off) is a presentation preference, not an access control. The user's token is not bound to a tenant, so any application holding it can read any tenant's notifications through that tenant's route.
+
+### Live updates
+
+An open inbox learns about changes over a Server-Sent Events stream instead of polling. The stream carries only a nudge that says "refetch"; the client then reads counts and notifications from the routes above, so the API stays the only source of truth.
+
+```
+POST /v1/me/notifications/stream-ticket   (OAuth)  →  {"ticket": "…", "expires_in": 30}
+GET  /v1/stream/tenants/{tenant}/notifications?ticket=…   one tenant's nudges
+GET  /v1/stream/notifications?ticket=…                    every tenant's; 403 unless cross_tenant_notifications is on
+```
+
+- **Ticket:** random, stored in Redis for 30 s and deleted when a stream redeems it, so it works once. A missing, used or expired ticket returns 401. Minting returns 503 if Redis is down.
+- **Events:** `retry: 5000` first, then `event: inbox` with `data: {"kind": "created" | "changed", "tenant": "…"}`, and `event: ping` every 25 s to keep proxies from closing an idle stream. `created` is sent after an ingest commits a notification for the user; `changed` after the user reads, reads all or dismisses. The tenant stream drops nudges for other tenants.
+- **Nudges can be dropped**, so a client also refetches when it (re)connects and when the tab becomes visible. Several nudges and one nudge mean the same thing: refetch.
+- **CORS:** the response allows the request's `Origin` only if it is listed in that tenant's `tenants.<id>.stream_origins` (any tenant's for the global stream).
+- **Limits:** 32 open streams per user per API instance; the 33rd gets 429. A stream closes after 15–18 minutes, so the client's new ticket re-checks its OAuth token (cached up to 15 min) and preferences. A frame that can't be written within 10 s closes the stream, so a client that stops reading doesn't hold a slot.
+- **Reconnect is client-driven.** A ticket works once, so on `error` the client closes the `EventSource`, backs off, mints a new ticket and reopens. Errors after authentication (Redis or the hub failing) return 200 and end the stream at once, because a non-200 makes `EventSource` stop without firing a normal reconnect. See [Tenant integration](tenant-integration.md#live-updates) for the client contract.
+
+```
+ingest / API mutation ── commit ──▶ PUBLISH synapse:inbox:{user_id}  (best effort, 500 ms budget)
+                                          │  Redis pub/sub
+                                          ▼
+             each API instance: one SUBSCRIBE connection (live.Hub)
+                                          │  per-user channel, subscribed while the user has a stream open
+                                          ▼
+                                  that user's open streams
+```
+
+- Publishing happens after the transaction commits and never fails the request or the ingest batch. Fan-outs are pipelined 1000 users at a time and stop at the first failed batch.
+- Each instance subscribes to a user's channel when their first stream opens and unsubscribes when the last closes. A stream is only reported open once Redis has confirmed the subscription.
+- If the hub's Redis connection fails, or stays silent through 30 s and an unanswered PING, every stream on that instance ends and its clients reconnect.
+- Behind a proxy, streams need HTTP/2 (browsers allow 6 HTTP/1.1 connections per origin) and response buffering off; the stream sets `X-Accel-Buffering: no`.
 
 **Tenant view:** `GET /v1/events/{id}/deliveries` (tenant API key) lists each notification as a `DELIVERED` result with `channel_type` `in_app`, next to the external deliveries. Read and dismissed state is not exposed to tenants.
 
