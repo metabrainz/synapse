@@ -43,6 +43,9 @@ type Config struct {
 	StreamOrigins map[string][]string
 	// StreamPing is the stream keep-alive interval; 0 means 25s.
 	StreamPing time.Duration
+	// StreamLifetime is how long a stream stays open before the client must
+	// reconnect with a new ticket; 0 means 15m, matching the OAuth introspection cache.
+	StreamLifetime time.Duration
 }
 
 // Deps bundles the data-layer dependencies injected into the router.
@@ -158,7 +161,11 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 	if ping == 0 {
 		ping = 25 * time.Second
 	}
-	stream := &streamHandler{hub: d.Hub, tickets: d.Tickets, prefs: d.Preferences, reg: d.Registry, origins: cfg.StreamOrigins, ping: ping}
+	lifetime := cfg.StreamLifetime
+	if lifetime == 0 {
+		lifetime = 15 * time.Minute
+	}
+	stream := &streamHandler{hub: d.Hub, tickets: d.Tickets, prefs: d.Preferences, reg: d.Registry, origins: cfg.StreamOrigins, ping: ping, lifetime: lifetime}
 	r.Get("/v1/stream/tenants/{tenant_id}/notifications", stream.tenant)
 	r.Get("/v1/stream/notifications", stream.global)
 

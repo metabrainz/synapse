@@ -155,6 +155,18 @@ func TestStreamSurvivesWriteTimeout(t *testing.T) {
 	}
 }
 
+func TestStreamExpires(t *testing.T) {
+	e := setup(t)
+	resp, _ := e.openStream(tenantStream(e.ticket("alice")), "")
+	start := time.Now()
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	if d := time.Since(start); d < 3*time.Second || d > 4500*time.Millisecond {
+		t.Fatalf("want the stream to end after its 3s lifetime plus up to 600ms jitter, ended after %s", d)
+	}
+}
+
 func TestStreamTenantFilter(t *testing.T) {
 	e := setup(t)
 	e.stub.grant("tok-alice", "alice")

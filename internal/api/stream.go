@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"slices"
 	"time"
@@ -23,12 +24,13 @@ const streamWriteTimeout = 10 * time.Second
 // streamHandler serves the inbox SSE streams. They are plain chi routes because
 // huma can't clear the write deadline or flush per event.
 type streamHandler struct {
-	hub     *live.Hub
-	tickets *live.Tickets
-	prefs   *preferences.Repo
-	reg     *eventtype.Registry
-	origins map[string][]string
-	ping    time.Duration
+	hub      *live.Hub
+	tickets  *live.Tickets
+	prefs    *preferences.Repo
+	reg      *eventtype.Registry
+	origins  map[string][]string
+	ping     time.Duration
+	lifetime time.Duration
 }
 
 // GET /v1/stream/tenants/{tenant_id}/notifications?ticket=
@@ -114,11 +116,17 @@ func (h *streamHandler) serve(w http.ResponseWriter, r *http.Request, uid, tenan
 	}
 	ping := time.NewTicker(h.ping)
 	defer ping.Stop()
+	// Expiry makes the client mint a new ticket, which re-checks its OAuth token
+	// and preferences. Jitter keeps streams opened together from expiring together.
+	expire := time.NewTimer(h.lifetime + rand.N(h.lifetime/5))
+	defer expire.Stop()
 	for {
 		var event string
 		var data []byte
 		select {
 		case <-r.Context().Done():
+			return
+		case <-expire.C:
 			return
 		case n, ok := <-nudges:
 			if !ok {

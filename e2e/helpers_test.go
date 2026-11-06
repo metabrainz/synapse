@@ -142,9 +142,10 @@ func setup(t *testing.T) *env {
 
 	router := api.NewRouter(
 		api.Config{
-			Introspector:  stub,
-			StreamOrigins: map[string][]string{testTenantID: {"https://listenbrainz.org"}},
-			StreamPing:    200 * time.Millisecond,
+			Introspector:   stub,
+			StreamOrigins:  map[string][]string{testTenantID: {"https://listenbrainz.org"}},
+			StreamPing:     200 * time.Millisecond,
+			StreamLifetime: 3 * time.Second,
 		},
 		api.Deps{
 			Pool:           pool,
