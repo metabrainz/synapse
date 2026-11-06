@@ -6,6 +6,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/metabrainz/synapse/internal/api/middleware"
+	"github.com/metabrainz/synapse/internal/live"
 	"github.com/metabrainz/synapse/internal/store/notifications"
 )
 
@@ -64,12 +65,15 @@ type markAllReadOutput struct {
 }
 
 func (h *meHandler) readAll(ctx context.Context, userID, tenantID string) (*markAllReadOutput, error) {
-	n, err := h.notifications.MarkAllRead(ctx, userID, tenantID)
+	byTenant, err := h.notifications.MarkAllRead(ctx, userID, tenantID)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("mark all read failed")
 	}
 	out := &markAllReadOutput{}
-	out.Body.Updated = n
+	for tenant, n := range byTenant {
+		out.Body.Updated += n
+		h.live.Publish(ctx, userID, live.Nudge{Kind: live.KindChanged, Tenant: tenant})
+	}
 	return out, nil
 }
 
@@ -77,15 +81,17 @@ func (h *meHandler) update(
 	ctx context.Context,
 	userID, tenantID string,
 	id int64,
-	op func(ctx context.Context, userID, tenantID string, id int64) error,
+	op func(ctx context.Context, userID, tenantID string, id int64) (string, error),
 	failMsg string,
 ) (*struct{}, error) {
-	if err := op(ctx, userID, tenantID, id); err != nil {
+	tenant, err := op(ctx, userID, tenantID, id)
+	if err != nil {
 		if errors.Is(err, notifications.ErrNotFound) {
 			return nil, huma.Error404NotFound("notification not found")
 		}
 		return nil, huma.Error500InternalServerError(failMsg)
 	}
+	h.live.Publish(ctx, userID, live.Nudge{Kind: live.KindChanged, Tenant: tenant})
 	return nil, nil
 }
 
@@ -264,4 +270,28 @@ func (h *meHandler) dismissAnyTenant(ctx context.Context, input *globalNotificat
 		return nil, err
 	}
 	return h.update(ctx, uid, "", input.ID, h.notifications.Dismiss, "dismiss failed")
+}
+
+// POST /v1/me/notifications/stream-ticket
+
+type streamTicketOutput struct {
+	Body struct {
+		Ticket    string `json:"ticket" doc:"Single-use ticket; pass it to a stream route as ?ticket="`
+		ExpiresIn int    `json:"expires_in" doc:"Seconds until the ticket expires"`
+	}
+}
+
+func (h *meHandler) createStreamTicket(ctx context.Context, _ *struct{}) (*streamTicketOutput, error) {
+	uid := middleware.UserFromContext(ctx)
+	if uid == "" {
+		return nil, huma.Error401Unauthorized("unauthenticated")
+	}
+	ticket, err := h.tickets.Mint(ctx, uid)
+	if err != nil {
+		return nil, huma.Error503ServiceUnavailable("stream unavailable")
+	}
+	out := &streamTicketOutput{}
+	out.Body.Ticket = ticket
+	out.Body.ExpiresIn = int(live.TicketTTL.Seconds())
+	return out, nil
 }

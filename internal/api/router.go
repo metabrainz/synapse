@@ -54,6 +54,7 @@ type Deps struct {
 	Fanout         *fanout.Fanout
 	Registry       *eventtype.Registry
 	Live           *live.Publisher
+	Tickets        *live.Tickets
 }
 
 // NewRouter wires all HTTP routes and returns the root handler.
@@ -174,7 +175,7 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 		},
 	}
 
-	registerRoutes(api, d.Pool, d.Fanout, d.Registry, d.UserChannels, d.TenantMappings, d.Subscriptions, d.Notifications, d.Preferences, d.Live)
+	registerRoutes(api, d.Pool, d.Fanout, d.Registry, d.UserChannels, d.TenantMappings, d.Subscriptions, d.Notifications, d.Preferences, d.Live, d.Tickets)
 
 	for _, ct := range adapter.ChannelTypes() {
 		if rp, ok := adapter.Registry[ct].(adapter.RouteProvider); ok {

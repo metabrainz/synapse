@@ -37,6 +37,7 @@ func registerRoutes(
 	inbox *notifications.Repo,
 	prefs *preferences.Repo,
 	pub *live.Publisher,
+	tickets *live.Tickets,
 ) {
 	// --- Surface A: tenant API key ---
 
@@ -70,6 +71,8 @@ func registerRoutes(
 		notifications:  inbox,
 		preferences:    prefs,
 		reg:            reg,
+		live:           pub,
+		tickets:        tickets,
 	}
 
 	// Channels — CRUD for the user's notification channels.
@@ -276,6 +279,15 @@ func registerRoutes(
 		DefaultStatus: http.StatusNoContent,
 		Security:      surfaceBSec,
 	}, me.dismissAnyTenant)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "create-stream-ticket",
+		Method:      http.MethodPost,
+		Path:        "/v1/me/notifications/stream-ticket",
+		Summary:     "Mint a single-use ticket to open an inbox event stream",
+		Tags:        []string{"notifications"},
+		Security:    surfaceBSec,
+	}, me.createStreamTicket)
 
 	// Preferences — per-user settings about how the inbox is presented.
 	huma.Register(api, huma.Operation{

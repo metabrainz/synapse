@@ -2,6 +2,7 @@ package api
 
 import (
 	"github.com/metabrainz/synapse/internal/eventtype"
+	"github.com/metabrainz/synapse/internal/live"
 	"github.com/metabrainz/synapse/internal/store/notifications"
 	"github.com/metabrainz/synapse/internal/store/preferences"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
@@ -16,4 +17,6 @@ type meHandler struct {
 	notifications  *notifications.Repo
 	preferences    *preferences.Repo
 	reg            *eventtype.Registry
+	live           *live.Publisher
+	tickets        *live.Tickets
 }

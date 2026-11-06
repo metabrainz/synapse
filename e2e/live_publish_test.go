@@ -4,6 +4,7 @@ package e2e_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -131,4 +132,142 @@ func TestConsumerBatchOneNudgePerUser(t *testing.T) {
 
 	expectNudge(t, nudges)
 	expectNoNudge(t, nudges)
+}
+
+func expectChanged(t *testing.T, ch <-chan live.Nudge) {
+	t.Helper()
+	select {
+	case n := <-ch:
+		if n != (live.Nudge{Kind: live.KindChanged, Tenant: testTenantID}) {
+			t.Fatalf("unexpected nudge %+v", n)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no nudge within 1s")
+	}
+}
+
+func (e *env) seedFollows(user string, n int) []int64 {
+	e.t.Helper()
+	for range n {
+		r := e.tenantDo("POST", "/v1/events", followBody(user), e.apiKey)
+		r.Body.Close()
+		if r.StatusCode != http.StatusAccepted {
+			e.t.Fatalf("ingest: want 202, got %d", r.StatusCode)
+		}
+	}
+	e.stub.grant("tok-"+user, user)
+	_, page := e.listNotifications("tok-"+user, "")
+	ids := make([]int64, len(page.Notifications))
+	for i, n := range page.Notifications {
+		ids[i] = n.ID
+	}
+	return ids
+}
+
+func TestMarkReadPublishesChanged(t *testing.T) {
+	e := setup(t)
+	ids := e.seedFollows("alice", 2)
+	e.setPreference("tok-alice", true)
+	nudges := e.subscribe("alice")
+
+	for _, path := range []string{
+		fmt.Sprintf("/v1/me/tenants/%s/notifications/%d/read", testTenantID, ids[0]),
+		fmt.Sprintf("/v1/me/notifications/%d/read", ids[1]),
+	} {
+		r := e.userDo("POST", path, nil, "tok-alice")
+		r.Body.Close()
+		if r.StatusCode != http.StatusNoContent {
+			t.Fatalf("%s: want 204, got %d", path, r.StatusCode)
+		}
+		expectChanged(t, nudges)
+		expectNoNudge(t, nudges)
+	}
+}
+
+func TestDismissPublishesChanged(t *testing.T) {
+	e := setup(t)
+	ids := e.seedFollows("alice", 2)
+	e.setPreference("tok-alice", true)
+	nudges := e.subscribe("alice")
+
+	for _, path := range []string{
+		fmt.Sprintf("/v1/me/tenants/%s/notifications/%d", testTenantID, ids[0]),
+		fmt.Sprintf("/v1/me/notifications/%d", ids[1]),
+	} {
+		r := e.userDo("DELETE", path, nil, "tok-alice")
+		r.Body.Close()
+		if r.StatusCode != http.StatusNoContent {
+			t.Fatalf("%s: want 204, got %d", path, r.StatusCode)
+		}
+		expectChanged(t, nudges)
+		expectNoNudge(t, nudges)
+	}
+}
+
+func TestReadAllPublishesPerTenant(t *testing.T) {
+	e := setup(t)
+	e.seedFollows("alice", 2)
+	nudges := e.subscribe("alice")
+	path := "/v1/me/tenants/" + testTenantID + "/notifications/read-all"
+
+	for _, want := range []int64{2, 0} {
+		r := e.userDo("POST", path, nil, "tok-alice")
+		var out struct {
+			Updated int64 `json:"updated"`
+		}
+		decodeJSON(t, r, &out)
+		if out.Updated != want {
+			t.Fatalf("updated: want %d, got %d", want, out.Updated)
+		}
+		if want > 0 {
+			expectChanged(t, nudges)
+		}
+		expectNoNudge(t, nudges)
+	}
+}
+
+func TestMutationNotFoundNoNudge(t *testing.T) {
+	e := setup(t)
+	e.seedFollows("alice", 1)
+	bobIDs := e.seedFollows("bob", 1)
+	nudges := e.subscribe("alice")
+	base := "/v1/me/tenants/" + testTenantID + "/notifications"
+
+	for _, id := range []int64{999999, bobIDs[0]} {
+		for _, req := range [][2]string{
+			{"POST", fmt.Sprintf("%s/%d/read", base, id)},
+			{"DELETE", fmt.Sprintf("%s/%d", base, id)},
+		} {
+			r := e.userDo(req[0], req[1], nil, "tok-alice")
+			r.Body.Close()
+			if r.StatusCode != http.StatusNotFound {
+				t.Fatalf("%s %s: want 404, got %d", req[0], req[1], r.StatusCode)
+			}
+		}
+	}
+	expectNoNudge(t, nudges)
+}
+
+func TestStreamTicketRoute(t *testing.T) {
+	e := setup(t)
+	e.stub.grant("tok-alice", "alice")
+
+	r := e.userDo("POST", "/v1/me/notifications/stream-ticket", nil, "tok-alice")
+	var out struct {
+		Ticket    string `json:"ticket"`
+		ExpiresIn int    `json:"expires_in"`
+	}
+	decodeJSON(t, r, &out)
+	if r.StatusCode != http.StatusOK || out.ExpiresIn != 30 {
+		t.Fatalf("want 200 with expires_in 30, got %d / %d", r.StatusCode, out.ExpiresIn)
+	}
+	if uid, err := live.NewTickets(e.rdb).Redeem(e.ctx, out.Ticket); err != nil || uid != "alice" {
+		t.Fatalf("redeem: got %q, %v", uid, err)
+	}
+
+	r = e.do("POST", "/v1/me/notifications/stream-ticket", nil, nil)
+	r.Body.Close()
+	if r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("no token: want 401, got %d", r.StatusCode)
+	}
 }
