@@ -224,6 +224,19 @@ func TestStreamUnauthorizedHasCORS(t *testing.T) {
 	}
 }
 
+// An allowed page must be able to read a 404 for a tenant that doesn't exist.
+func TestStreamUnknownTenantHasCORS(t *testing.T) {
+	e := setup(t)
+	resp, _ := e.openStream("/v1/stream/tenants/nope/notifications", lbOrigin, e.token("alice"))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("want 404, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != lbOrigin {
+		t.Fatalf("Access-Control-Allow-Origin: want %q, got %q", lbOrigin, got)
+	}
+}
+
 func TestStreamIntrospectionDown(t *testing.T) {
 	e := setup(t)
 	resp, _ := e.openStream(tenantStreamPath, lbOrigin, "tok-down")

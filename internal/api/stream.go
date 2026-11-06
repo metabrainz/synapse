@@ -62,7 +62,12 @@ func (h *streamHandler) global(w http.ResponseWriter, r *http.Request) {
 // allowOrigin runs before auth so every response, 401 included, is readable by an allowed page.
 func (h *streamHandler) allowOrigin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.cors(w, r, chi.URLParam(r, "tenant_id"))
+		tenant := chi.URLParam(r, "tenant_id")
+		// An unknown tenant has no origins of its own; any tenant's page may read its 404.
+		if !h.reg.HasTenant(tenant) {
+			tenant = ""
+		}
+		h.cors(w, r, tenant)
 		next.ServeHTTP(w, r)
 	})
 }
