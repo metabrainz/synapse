@@ -146,8 +146,8 @@ func (h *streamHandler) serve(w http.ResponseWriter, r *http.Request, uid, tenan
 	}
 }
 
-// begin opens the event stream. A stream that ends right after begin tells the
-// browser to reconnect in 5s.
+// begin opens the event stream. The browser's own retry reuses the spent ticket
+// and gets 401, so clients reconnect with a new ticket.
 func begin(w http.ResponseWriter) (*http.ResponseController, error) {
 	hdr := w.Header()
 	hdr.Set("Content-Type", "text/event-stream")
