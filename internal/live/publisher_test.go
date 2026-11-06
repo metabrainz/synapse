@@ -75,17 +75,33 @@ func TestPublishSurvivesCanceledContext(t *testing.T) {
 	expect(t, ch, `{"kind":"changed","tenant":"t"}`)
 }
 
-func TestPublishNilAndDeadRedis(t *testing.T) {
+func TestPublishDeadRedis(t *testing.T) {
 	n := live.Nudge{Kind: live.KindCreated, Tenant: "t"}
-	(*live.Publisher)(nil).Publish(context.Background(), "alice", n)
-	(*live.Publisher)(nil).PublishMany(context.Background(), []live.Target{{UserID: "alice", Nudge: n}})
-
 	p := live.NewPublisher(deadRedis(t))
 	start := time.Now()
 	p.Publish(context.Background(), "alice", n)
 	p.PublishMany(context.Background(), []live.Target{{UserID: "alice", Nudge: n}})
 	if d := time.Since(start); d > time.Second {
 		t.Fatalf("dead redis took %s", d)
+	}
+}
+
+func TestPublishManyStopsAtFirstFailedChunk(t *testing.T) {
+	rdb := startRedis(t)
+	// Without ContextTimeoutEnabled go-redis ignores publishTimeout and waits ReadTimeout (3s).
+	timed := redis.NewClient(&redis.Options{Addr: rdb.Options().Addr, ContextTimeoutEnabled: true, MaxRetries: -1})
+	t.Cleanup(func() { timed.Close() })
+	ts := make([]live.Target, 5000)
+	for i := range ts {
+		ts[i] = live.Target{UserID: fmt.Sprint(i), Nudge: live.Nudge{Kind: live.KindCreated, Tenant: "t"}}
+	}
+	if err := rdb.Do(context.Background(), "CLIENT", "PAUSE", 3000, "ALL").Err(); err != nil {
+		t.Fatalf("client pause: %v", err)
+	}
+	start := time.Now()
+	live.NewPublisher(timed).PublishMany(context.Background(), ts)
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("unresponsive redis took %s", d)
 	}
 }
 

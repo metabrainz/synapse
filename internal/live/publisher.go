@@ -30,9 +30,6 @@ type Target struct {
 // Publish is best-effort: failures are logged, never returned. The context is
 // detached so a client disconnecting right after the commit doesn't drop the nudge.
 func (p *Publisher) Publish(ctx context.Context, userID string, n Nudge) {
-	if p == nil {
-		return
-	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), publishTimeout)
 	defer cancel()
 
@@ -42,17 +39,19 @@ func (p *Publisher) Publish(ctx context.Context, userID string, n Nudge) {
 	}
 }
 
+// PublishMany stops at the first failed chunk so an unresponsive Redis costs
+// one publishTimeout, not one per chunk.
 func (p *Publisher) PublishMany(ctx context.Context, ts []Target) {
-	if p == nil {
-		return
-	}
 	for start := 0; start < len(ts); start += chunkSize {
 		chunk := ts[start:min(start+chunkSize, len(ts))]
-		p.publishChunk(ctx, chunk)
+		if err := p.publishChunk(ctx, chunk); err != nil {
+			slog.Warn("live: publish failed", "skipped", len(ts)-start, "err", err)
+			return
+		}
 	}
 }
 
-func (p *Publisher) publishChunk(ctx context.Context, chunk []Target) {
+func (p *Publisher) publishChunk(ctx context.Context, chunk []Target) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), publishTimeout)
 	defer cancel()
 
@@ -61,7 +60,6 @@ func (p *Publisher) publishChunk(ctx context.Context, chunk []Target) {
 		payload, _ := json.Marshal(t.Nudge)
 		pipe.Publish(ctx, Channel(t.UserID), payload)
 	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		slog.Warn("live: publish chunk failed", "count", len(chunk), "err", err)
-	}
+	_, err := pipe.Exec(ctx)
+	return err
 }
