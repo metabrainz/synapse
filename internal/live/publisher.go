@@ -18,8 +18,18 @@ type Publisher struct {
 	rdb *redis.Client
 }
 
+// NewPublisher opens its own client so publishTimeout bounds socket I/O without
+// changing timeouts for the other users of rdb.
 func NewPublisher(rdb *redis.Client) *Publisher {
-	return &Publisher{rdb: rdb}
+	o := rdb.Options()
+	return &Publisher{rdb: redis.NewClient(&redis.Options{
+		Addr:                  o.Addr,
+		Username:              o.Username,
+		Password:              o.Password,
+		DB:                    o.DB,
+		TLSConfig:             o.TLSConfig,
+		ContextTimeoutEnabled: true,
+	})}
 }
 
 type Target struct {
