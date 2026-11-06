@@ -205,6 +205,21 @@ func TestHubDetectsUnresponsiveRedis(t *testing.T) {
 	waitClosed(t, a, 1500*time.Millisecond)
 }
 
+func TestHubCapsStreamsPerUser(t *testing.T) {
+	_, hub, _ := startHub(t)
+	var unregister func()
+	for range 32 {
+		_, unregister = register(t, hub, "alice")
+	}
+	if _, _, err := hub.Register(context.Background(), "alice"); !errors.Is(err, live.ErrTooManyStreams) {
+		t.Fatalf("33rd register err = %v, want ErrTooManyStreams", err)
+	}
+	register(t, hub, "bob")
+
+	unregister()
+	register(t, hub, "alice")
+}
+
 func TestHubCloseClosesAndRejects(t *testing.T) {
 	_, hub, _ := startHub(t)
 	a, _ := register(t, hub, "alice")

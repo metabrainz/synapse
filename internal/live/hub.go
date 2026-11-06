@@ -12,13 +12,19 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const streamBuffer = 8
+const (
+	streamBuffer      = 8
+	maxStreamsPerUser = 32
+)
 
 // receiveTimeout bounds each read so a half-open connection is noticed: one
 // silent interval sends a PING, a second drops the subscription.
 var receiveTimeout = 30 * time.Second
 
-var ErrHubClosed = errors.New("live: hub closed")
+var (
+	ErrHubClosed      = errors.New("live: hub closed")
+	ErrTooManyStreams = errors.New("live: too many streams for user")
+)
 
 type userStreams struct {
 	chans map[chan Nudge]struct{}
@@ -123,6 +129,10 @@ func (h *Hub) Register(ctx context.Context, userID string) (<-chan Nudge, func()
 		return nil, nil, ErrHubClosed
 	}
 	s := h.streams[channel]
+	if s != nil && len(s.chans) >= maxStreamsPerUser {
+		h.mu.Unlock()
+		return nil, nil, ErrTooManyStreams
+	}
 	if s == nil {
 		// The connection is shared: a request deadline here would become a socket
 		// write deadline, and a write error resets every stream on the instance.

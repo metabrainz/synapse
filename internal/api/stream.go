@@ -91,6 +91,10 @@ func (h *streamHandler) redeem(w http.ResponseWriter, r *http.Request) (string, 
 // serve streams uid's nudges, only those for tenant unless tenant is "".
 func (h *streamHandler) serve(w http.ResponseWriter, r *http.Request, uid, tenant string) {
 	nudges, unregister, err := h.hub.Register(r.Context(), uid)
+	if errors.Is(err, live.ErrTooManyStreams) {
+		writeError(w, http.StatusTooManyRequests, "too many open streams")
+		return
+	}
 	if err != nil {
 		if !errors.Is(err, live.ErrHubClosed) && r.Context().Err() == nil {
 			slog.Error("stream: register", "user", uid, "err", err)
