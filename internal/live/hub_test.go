@@ -191,6 +191,20 @@ func TestHubRecoversAfterConnectionKill(t *testing.T) {
 	t.Fatal("hub did not recover after connection kill")
 }
 
+func TestHubDetectsUnresponsiveRedis(t *testing.T) {
+	prev := *live.ReceiveTimeout
+	*live.ReceiveTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { *live.ReceiveTimeout = prev })
+
+	rdb, hub, _ := startHub(t)
+	a, _ := register(t, hub, "alice")
+
+	if err := rdb.Do(context.Background(), "CLIENT", "PAUSE", 2000, "ALL").Err(); err != nil {
+		t.Fatalf("client pause: %v", err)
+	}
+	waitClosed(t, a, 1500*time.Millisecond)
+}
+
 func TestHubCloseClosesAndRejects(t *testing.T) {
 	_, hub, _ := startHub(t)
 	a, _ := register(t, hub, "alice")

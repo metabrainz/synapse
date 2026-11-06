@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"sync"
 	"time"
 
@@ -12,6 +13,10 @@ import (
 )
 
 const streamBuffer = 8
+
+// receiveTimeout bounds each read so a half-open connection is noticed: one
+// silent interval sends a PING, a second drops the subscription.
+var receiveTimeout = 30 * time.Second
 
 var ErrHubClosed = errors.New("live: hub closed")
 
@@ -45,7 +50,7 @@ func NewHub(rdb *redis.Client) *Hub {
 
 // Run receives from Redis until ctx is done, then closes the hub.
 func (h *Hub) Run(ctx context.Context) {
-	// Receive has no read deadline and ignores cancellation; closing the PubSub unblocks it.
+	// Receive ignores cancellation; closing the PubSub unblocks it.
 	context.AfterFunc(ctx, h.Close)
 	defer h.Close()
 
@@ -53,11 +58,19 @@ func (h *Hub) Run(ctx context.Context) {
 	ps := h.ps
 	h.mu.Unlock()
 
+	pinged := false
 	for {
-		msg, err := ps.Receive(ctx)
+		msg, err := ps.ReceiveTimeout(ctx, receiveTimeout)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
+			}
+			var netErr net.Error
+			if !pinged && errors.As(err, &netErr) && netErr.Timeout() {
+				pinged = true
+				if err := ps.Ping(ctx); err == nil {
+					continue
+				}
 			}
 			h.mu.Lock()
 			if h.closed {
@@ -72,6 +85,7 @@ func (h *Hub) Run(ctx context.Context) {
 			h.ps = h.rdb.Subscribe(context.Background())
 			ps = h.ps
 			h.mu.Unlock()
+			pinged = false
 
 			select {
 			case <-ctx.Done():
@@ -80,6 +94,7 @@ func (h *Hub) Run(ctx context.Context) {
 			}
 			continue
 		}
+		pinged = false
 
 		switch m := msg.(type) {
 		case *redis.Subscription:
