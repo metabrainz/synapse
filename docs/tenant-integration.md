@@ -117,26 +117,37 @@ Since anything can happen while the stream is closed, refetch the count every ti
 ### Copy this
 
 ```js
+// Returns a function that closes the stream for good, e.g. on logout or unmount.
 function connectInbox({ synapse, tenant, getToken, refreshToken, refetch }) {
-  let ctrl, watchdog, delay = 5000;
+  let ctrl, watchdog, stopped = false, delay = 5000;
 
   // Wait a random time, then reconnect. The random wait stops every user
   // reconnecting at the same moment.
   const retry = () => {
     ctrl?.abort();
     clearTimeout(watchdog);
+    if (stopped) return;
     setTimeout(open, Math.random() * delay);
     delay = Math.min(delay * 2, 60000);
   };
 
   // No event for 60 s means the connection is dead, e.g. after the laptop slept.
+  // Armed before fetch too, so a connect that hangs is also retried.
   const alive = () => {
     clearTimeout(watchdog);
     watchdog = setTimeout(retry, 60000);
   };
 
+  const stop = () => {
+    stopped = true;
+    ctrl?.abort();
+    clearTimeout(watchdog);
+  };
+
   async function open() {
+    if (stopped) return;
     ctrl = new AbortController();
+    alive();
     try {
       const res = await fetch(`${synapse}/v1/stream/tenants/${tenant}/notifications`, {
         headers: { Authorization: `Bearer ${getToken()}` },
@@ -146,6 +157,8 @@ function connectInbox({ synapse, tenant, getToken, refreshToken, refetch }) {
         await refreshToken();
         return retry();
       }
+      // Retrying can't fix these: wrong tenant, or the cross-tenant preference is off.
+      if (res.status === 403 || res.status === 404) return stop();
       if (!res.ok) return retry();
 
       delay = 5000;
@@ -158,10 +171,11 @@ function connectInbox({ synapse, tenant, getToken, refreshToken, refetch }) {
         const { value, done } = await reader.read();
         if (done) break;
         buf += value;
+        // Events end with a blank line; a proxy may have rewritten \n to \r\n.
         let end;
-        while ((end = buf.indexOf("\n\n")) >= 0) {
-          const event = /^event: (.*)$/m.exec(buf.slice(0, end))?.[1];
-          buf = buf.slice(end + 2);
+        while ((end = /\r?\n\r?\n/.exec(buf))) {
+          const event = /^event: ?(.*?)\r?$/m.exec(buf.slice(0, end.index))?.[1];
+          buf = buf.slice(end.index + end[0].length);
           alive();
           // Wait up to 3 s so users notified together don't all refetch at once.
           if (event === "inbox") setTimeout(refetch, Math.random() * 3000);
@@ -174,6 +188,7 @@ function connectInbox({ synapse, tenant, getToken, refreshToken, refetch }) {
   }
 
   open();
+  return stop;
 }
 ```
 
