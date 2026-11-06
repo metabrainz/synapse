@@ -225,7 +225,8 @@ func TestHubRegisterReturnsAfterSubscribeConfirmed(t *testing.T) {
 }
 
 func TestHubRegisterWaitsForConfirmation(t *testing.T) {
-	hub := live.NewHub(startRedis(t)) // not running, so no confirmation is ever read
+	rdb := startRedis(t)
+	hub := live.NewHub(rdb) // not running, so no confirmation is ever read
 	t.Cleanup(hub.Close)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -233,4 +234,5 @@ func TestHubRegisterWaitsForConfirmation(t *testing.T) {
 	if _, _, err := hub.Register(ctx, "carol"); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("register err = %v, want DeadlineExceeded", err)
 	}
+	waitNumSub(t, rdb, "carol", 0)
 }

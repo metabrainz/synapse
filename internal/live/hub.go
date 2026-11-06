@@ -109,9 +109,9 @@ func (h *Hub) Register(ctx context.Context, userID string) (<-chan Nudge, func()
 	}
 	s := h.streams[channel]
 	if s == nil {
-		if err := h.ps.Subscribe(ctx, channel); err != nil {
-			// go-redis remembers the channel even on failure; forget it.
-			_ = h.ps.Unsubscribe(ctx, channel)
+		// The connection is shared: a request deadline here would become a socket
+		// write deadline, and a write error resets every stream on the instance.
+		if err := h.ps.Subscribe(context.WithoutCancel(ctx), channel); err != nil {
 			h.mu.Unlock()
 			return nil, nil, err
 		}
