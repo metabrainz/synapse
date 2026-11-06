@@ -55,6 +55,17 @@ func (c *Config) TenantInAppRetentionDays() map[string]int {
 	return out
 }
 
+// TenantStreamOrigins omits tenants that set none.
+func (c *Config) TenantStreamOrigins() map[string][]string {
+	out := make(map[string][]string, len(c.Tenants))
+	for id, tc := range c.Tenants {
+		if len(tc.StreamOrigins) > 0 {
+			out[id] = tc.StreamOrigins
+		}
+	}
+	return out
+}
+
 func defaultConfig() Config {
 	return Config{
 		Observability: ObservabilityConfig{

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/metabrainz/synapse/internal/adapter"
 	"github.com/metabrainz/synapse/internal/api"
@@ -25,6 +27,7 @@ import (
 	"github.com/metabrainz/synapse/internal/config"
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/live"
 	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/notifications"
@@ -49,10 +52,12 @@ type env struct {
 	ctx     context.Context
 	t       *testing.T
 	pool    *pgxpool.Pool
+	rdb     *redis.Client
 	server  *httptest.Server
 	amqpURL string
-	apiKey  string              // static tenant API key for testTenantID
-	fan     *fanout.Fanout      // shared with the HTTP server — cache-backed in tests
+	apiKey  string         // static tenant API key for testTenantID
+	fan     *fanout.Fanout // shared with the HTTP server — cache-backed in tests
+	hub     *live.Hub
 	pub     *rabbitmq.Publisher // long-lived publisher used by relayTick
 	stub    *stubIntrospector
 }
@@ -60,7 +65,8 @@ type env struct {
 // setup spins up real infrastructure (Postgres, Redis, RabbitMQ), runs migrations,
 // wires the full HTTP router, and returns a ready env. Cleanup is registered via
 // t.Cleanup in LIFO order: cancel → pool.Close → container teardown.
-func setup(t *testing.T) *env {
+// setup builds the test environment; opts adjust the API config.
+func setup(t *testing.T, opts ...func(*api.Config, *redis.Client)) *env {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -133,11 +139,20 @@ func setup(t *testing.T) *env {
 		WithExpiry(fanout.NewExpiry(map[string]int{testTenantID: 7}))
 
 	stub := newStubIntrospector()
+	hub := live.NewHub(rdb)
+	go hub.Run(ctx)
 
+	cfg := api.Config{
+		Introspector:   stub,
+		StreamOrigins:  map[string][]string{testTenantID: {"https://listenbrainz.org"}},
+		StreamPing:     200 * time.Millisecond,
+		StreamLifetime: 3 * time.Second,
+	}
+	for _, o := range opts {
+		o(&cfg, rdb)
+	}
 	router := api.NewRouter(
-		api.Config{
-			Introspector: stub,
-		},
+		cfg,
 		api.Deps{
 			Pool:           pool,
 			Redis:          rdb,
@@ -149,11 +164,18 @@ func setup(t *testing.T) *env {
 			Preferences:    preferences.New(pool),
 			Fanout:         fan,
 			Registry:       reg,
+			Live:           live.NewPublisher(rdb),
+			Hub:            hub,
 		},
 	)
 
-	srv := httptest.NewServer(router)
+	srv := httptest.NewUnstartedServer(router)
+	// Shorter than the stream tests run, to prove the stream clears its own write deadline.
+	srv.Config.WriteTimeout = time.Second
+	srv.Start()
 	t.Cleanup(srv.Close)
+	// Runs before srv.Close so open streams end and Close doesn't wait on them.
+	t.Cleanup(hub.Close)
 
 	pub, err := rabbitmq.New(amqpURL)
 	if err != nil {
@@ -165,10 +187,12 @@ func setup(t *testing.T) *env {
 		ctx:     ctx,
 		t:       t,
 		pool:    pool,
+		rdb:     rdb,
 		server:  srv,
 		amqpURL: amqpURL,
 		apiKey:  testAPIKey,
 		fan:     fan,
+		hub:     hub,
 		pub:     pub,
 		stub:    stub,
 	}
@@ -421,6 +445,9 @@ func (s *stubIntrospector) grant(token, id string) {
 }
 
 func (s *stubIntrospector) Introspect(_ context.Context, token string) (oauth.Claims, error) {
+	if token == "tok-down" {
+		return oauth.Claims{}, errors.New("introspection down")
+	}
 	s.mu.RLock()
 	claims, ok := s.tokens[token]
 	s.mu.RUnlock()

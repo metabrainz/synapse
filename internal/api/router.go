@@ -18,6 +18,7 @@ import (
 	"github.com/metabrainz/synapse/internal/api/middleware"
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/live"
 	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/ratelimit"
 	"github.com/metabrainz/synapse/internal/store/notifications"
@@ -38,6 +39,13 @@ type Config struct {
 	Introspector oauth.Introspector
 	Health       HealthChecks
 	Limiter      *ratelimit.Limiter
+	// StreamOrigins maps a tenant to the browser origins allowed to open its stream.
+	StreamOrigins map[string][]string
+	// StreamPing is the stream keep-alive interval; 0 means 25s.
+	StreamPing time.Duration
+	// StreamLifetime is how long a stream stays open before the client must
+	// reconnect; 0 means 15m, matching the OAuth introspection cache.
+	StreamLifetime time.Duration
 }
 
 // Deps bundles the data-layer dependencies injected into the router.
@@ -52,6 +60,8 @@ type Deps struct {
 	Preferences    *preferences.Repo
 	Fanout         *fanout.Fanout
 	Registry       *eventtype.Registry
+	Live           *live.Publisher
+	Hub            *live.Hub
 }
 
 // NewRouter wires all HTTP routes and returns the root handler.
@@ -85,9 +95,17 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 		}
 	}
 
+	userLimit := func(next http.Handler) http.Handler { return next }
+	if cfg.Limiter != nil {
+		userLimit = cfg.Limiter.Middleware(func(r *http.Request) string {
+			return middleware.UserFromContext(r.Context())
+		})
+	}
+
 	// Path-dispatching middleware: applies Surface A or B auth + rate limiting based on
-	// URL prefix. /v1/me/** → Surface B (OAuth); /v1/** → Surface A (tenant API key);
-	// everything else (health check, internal adapter routes) passes through unauthenticated.
+	// URL prefix. /v1/me/** → Surface B (OAuth); /v1/stream/** applies CORS and
+	// OAuth per route; /v1/** → Surface A (tenant API key); everything else
+	// (health check, internal adapter routes) passes through unauthenticated.
 	//
 	// Auth runs before rate limiting so the rate-limit key function can read the
 	// tenant/user ID set in context by auth.
@@ -103,19 +121,15 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 		}
 		surfaceA := authMW(surfaceAInner)
 
-		surfaceBInner := next
-		if cfg.Limiter != nil {
-			surfaceBInner = cfg.Limiter.Middleware(func(r *http.Request) string {
-				return middleware.UserFromContext(r.Context())
-			})(next)
-		}
-		surfaceB := userMW(surfaceBInner)
+		surfaceB := userMW(userLimit(next))
 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			p := r.URL.Path
 			switch {
 			case strings.HasPrefix(p, "/v1/me"):
 				surfaceB.ServeHTTP(w, r)
+			case strings.HasPrefix(p, "/v1/stream/"):
+				next.ServeHTTP(w, r)
 			case strings.HasPrefix(p, "/v1/"):
 				surfaceA.ServeHTTP(w, r)
 			default:
@@ -142,6 +156,26 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+
+	ping := cfg.StreamPing
+	if ping == 0 {
+		ping = 25 * time.Second
+	}
+	lifetime := cfg.StreamLifetime
+	if lifetime == 0 {
+		lifetime = 15 * time.Minute
+	}
+	stream := &streamHandler{hub: d.Hub, prefs: d.Preferences, reg: d.Registry, origins: cfg.StreamOrigins, ping: ping, lifetime: lifetime}
+	for _, rt := range []struct {
+		path string
+		h    http.HandlerFunc
+	}{
+		{"/v1/stream/tenants/{tenant_id}/notifications", stream.tenant},
+		{"/v1/stream/notifications", stream.global},
+	} {
+		r.With(stream.allowOrigin, userMW, userLimit).Get(rt.path, rt.h)
+		r.With(stream.allowOrigin).Options(rt.path, stream.preflight)
+	}
 
 	// Huma API — generates OpenAPI spec from handler types.
 	// Spec: GET /openapi.json   Swagger UI: GET /docs
@@ -172,7 +206,7 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 		},
 	}
 
-	registerRoutes(api, d.Pool, d.Fanout, d.Registry, d.UserChannels, d.TenantMappings, d.Subscriptions, d.Notifications, d.Preferences)
+	registerRoutes(api, d.Pool, d.Fanout, d.Registry, d.UserChannels, d.TenantMappings, d.Subscriptions, d.Notifications, d.Preferences, d.Live)
 
 	for _, ct := range adapter.ChannelTypes() {
 		if rp, ok := adapter.Registry[ct].(adapter.RouteProvider); ok {

@@ -131,11 +131,10 @@ func (m *MBIntrospector) Introspect(ctx context.Context, token string) (Claims, 
 	}
 
 	if m.rdb != nil {
-		var ttl time.Duration
+		// Capped so a revoked token stops working within defaultTokenTTL.
+		ttl := defaultTokenTTL
 		if ir.ExpiresAt > 0 {
-			ttl = time.Until(time.Unix(ir.ExpiresAt, 0))
-		} else {
-			ttl = defaultTokenTTL
+			ttl = min(ttl, time.Until(time.Unix(ir.ExpiresAt, 0)))
 		}
 		if ttl > 0 {
 			if err := m.rdb.Set(ctx, cacheKey(token), claims.ID+":"+claims.Username, ttl).Err(); err != nil {

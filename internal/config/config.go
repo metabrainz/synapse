@@ -38,6 +38,8 @@ type TenantConfig struct {
 	NotificationSettingsURL string `yaml:"notification_settings_url"`
 	// InAppRetentionDays: 0 uses the built-in default (fanout.DefaultInAppRetention).
 	InAppRetentionDays int `yaml:"in_app_retention_days"`
+	// StreamOrigins are the browser origins allowed to open this tenant's inbox stream.
+	StreamOrigins []string `yaml:"stream_origins"`
 }
 
 type OAuthConfig struct {
