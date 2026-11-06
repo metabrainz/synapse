@@ -13,7 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
+	"github.com/metabrainz/synapse/internal/api"
 	"github.com/metabrainz/synapse/internal/live"
+	"github.com/metabrainz/synapse/internal/ratelimit"
 )
 
 const lbOrigin = "https://listenbrainz.org"
@@ -226,6 +230,22 @@ func TestStreamIntrospectionDown(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("want 503, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != lbOrigin {
+		t.Fatalf("Access-Control-Allow-Origin: want %q, got %q", lbOrigin, got)
+	}
+}
+
+func TestStreamOpensAreRateLimited(t *testing.T) {
+	e := setup(t, func(c *api.Config, rdb *redis.Client) { c.Limiter = ratelimit.New(rdb, 2, 1) })
+	tok := e.token("alice")
+	for range 2 {
+		e.openOK(tenantStreamPath, tok)
+	}
+	resp, _ := e.openStream(tenantStreamPath, lbOrigin, tok)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("third open within the burst: want 429, got %d", resp.StatusCode)
 	}
 	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != lbOrigin {
 		t.Fatalf("Access-Control-Allow-Origin: want %q, got %q", lbOrigin, got)

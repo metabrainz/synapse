@@ -65,7 +65,8 @@ type env struct {
 // setup spins up real infrastructure (Postgres, Redis, RabbitMQ), runs migrations,
 // wires the full HTTP router, and returns a ready env. Cleanup is registered via
 // t.Cleanup in LIFO order: cancel → pool.Close → container teardown.
-func setup(t *testing.T) *env {
+// setup builds the test environment; opts adjust the API config.
+func setup(t *testing.T, opts ...func(*api.Config, *redis.Client)) *env {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -141,13 +142,17 @@ func setup(t *testing.T) *env {
 	hub := live.NewHub(rdb)
 	go hub.Run(ctx)
 
+	cfg := api.Config{
+		Introspector:   stub,
+		StreamOrigins:  map[string][]string{testTenantID: {"https://listenbrainz.org"}},
+		StreamPing:     200 * time.Millisecond,
+		StreamLifetime: 3 * time.Second,
+	}
+	for _, o := range opts {
+		o(&cfg, rdb)
+	}
 	router := api.NewRouter(
-		api.Config{
-			Introspector:   stub,
-			StreamOrigins:  map[string][]string{testTenantID: {"https://listenbrainz.org"}},
-			StreamPing:     200 * time.Millisecond,
-			StreamLifetime: 3 * time.Second,
-		},
+		cfg,
 		api.Deps{
 			Pool:           pool,
 			Redis:          rdb,

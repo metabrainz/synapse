@@ -95,6 +95,13 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 		}
 	}
 
+	userLimit := func(next http.Handler) http.Handler { return next }
+	if cfg.Limiter != nil {
+		userLimit = cfg.Limiter.Middleware(func(r *http.Request) string {
+			return middleware.UserFromContext(r.Context())
+		})
+	}
+
 	// Path-dispatching middleware: applies Surface A or B auth + rate limiting based on
 	// URL prefix. /v1/me/** → Surface B (OAuth); /v1/stream/** applies CORS and
 	// OAuth per route; /v1/** → Surface A (tenant API key); everything else
@@ -114,13 +121,7 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 		}
 		surfaceA := authMW(surfaceAInner)
 
-		surfaceBInner := next
-		if cfg.Limiter != nil {
-			surfaceBInner = cfg.Limiter.Middleware(func(r *http.Request) string {
-				return middleware.UserFromContext(r.Context())
-			})(next)
-		}
-		surfaceB := userMW(surfaceBInner)
+		surfaceB := userMW(userLimit(next))
 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			p := r.URL.Path
@@ -172,7 +173,7 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 		{"/v1/stream/tenants/{tenant_id}/notifications", stream.tenant},
 		{"/v1/stream/notifications", stream.global},
 	} {
-		r.With(stream.allowOrigin, userMW).Get(rt.path, rt.h)
+		r.With(stream.allowOrigin, userMW, userLimit).Get(rt.path, rt.h)
 		r.With(stream.allowOrigin).Options(rt.path, stream.preflight)
 	}
 
