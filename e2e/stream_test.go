@@ -56,15 +56,11 @@ func (e *env) streamRequest(method, path, origin, token string) (*http.Response,
 	return resp, bufio.NewReader(resp.Body)
 }
 
-// openOK opens a stream, asserts 200 and consumes the leading retry frame.
 func (e *env) openOK(path, token string) *bufio.Reader {
 	e.t.Helper()
 	resp, rd := e.openStream(path, "", token)
 	if resp.StatusCode != http.StatusOK {
 		e.t.Fatalf("open %s: want 200, got %d", path, resp.StatusCode)
-	}
-	if frame := readFrame(e.t, rd); frame != "retry: 5000\n" {
-		e.t.Fatalf("first frame: want retry, got %q", frame)
 	}
 	return rd
 }
@@ -117,7 +113,7 @@ func nextInbox(t *testing.T, rd *bufio.Reader) live.Nudge {
 	}
 }
 
-func TestStreamHeadersRetryPing(t *testing.T) {
+func TestStreamHeadersPing(t *testing.T) {
 	e := setup(t)
 	resp, rd := e.openStream(tenantStreamPath, "", e.token("alice"))
 	if resp.StatusCode != http.StatusOK {
@@ -131,9 +127,6 @@ func TestStreamHeadersRetryPing(t *testing.T) {
 		if got := resp.Header.Get(k); got != want {
 			t.Errorf("%s: want %q, got %q", k, want, got)
 		}
-	}
-	if frame := readFrame(t, rd); frame != "retry: 5000\n" {
-		t.Fatalf("first frame: want retry, got %q", frame)
 	}
 	if name, data := nextEvent(t, rd); name != "ping" || data != "{}" {
 		t.Fatalf("want ping {}, got %q %q", name, data)
@@ -310,16 +303,10 @@ func TestStreamHubClosed(t *testing.T) {
 	e := setup(t)
 	e.hub.Close()
 
-	resp, rd := e.openStream(tenantStreamPath, "", e.token("alice"))
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("want 200, got %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(rd)
-	if err != nil {
-		t.Fatalf("want EOF, got %v", err)
-	}
-	if strings.Contains(string(body), "event: inbox") {
-		t.Fatalf("closed hub must not deliver, got %q", body)
+	resp, _ := e.openStream(tenantStreamPath, "", e.token("alice"))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d", resp.StatusCode)
 	}
 }
 

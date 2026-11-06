@@ -49,7 +49,7 @@ func (h *streamHandler) global(w http.ResponseWriter, r *http.Request) {
 	p, err := h.prefs.Get(r.Context(), uid)
 	if err != nil {
 		slog.Error("stream: load preferences", "user", uid, "err", err)
-		begin(w)
+		writeError(w, http.StatusServiceUnavailable, "stream unavailable")
 		return
 	}
 	if !p.CrossTenantNotifications {
@@ -100,7 +100,7 @@ func (h *streamHandler) serve(w http.ResponseWriter, r *http.Request, uid, tenan
 		if !errors.Is(err, live.ErrHubClosed) && r.Context().Err() == nil {
 			slog.Error("stream: register", "user", uid, "err", err)
 		}
-		begin(w)
+		writeError(w, http.StatusServiceUnavailable, "stream unavailable")
 		return
 	}
 	defer unregister()
@@ -148,7 +148,12 @@ func begin(w http.ResponseWriter) (*http.ResponseController, error) {
 	hdr.Set("Cache-Control", "no-store")
 	hdr.Set("X-Accel-Buffering", "no")
 	rc := http.NewResponseController(w)
-	return rc, writeFrame(w, rc, "retry: 5000\n\n")
+	if err := rc.SetWriteDeadline(time.Now().Add(streamWriteTimeout)); err != nil {
+		slog.Error("stream: set write deadline", "err", err)
+		return nil, err
+	}
+	w.WriteHeader(http.StatusOK)
+	return rc, rc.Flush()
 }
 
 // writeFrame replaces the server's WriteTimeout, which would cut every stream
