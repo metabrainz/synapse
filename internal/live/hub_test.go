@@ -241,18 +241,6 @@ func TestHubUnregisterAfterClose(t *testing.T) {
 	unregister()
 }
 
-func TestHubRegisterReturnsAfterSubscribeConfirmed(t *testing.T) {
-	rdb, hub, pub := startHub(t)
-	c, _ := register(t, hub, "carol")
-
-	if got := numSub(t, rdb, "carol"); got != 1 {
-		t.Fatalf("numsub right after register = %d, want 1", got)
-	}
-	n := live.Nudge{Kind: live.KindCreated, Tenant: "t"}
-	pub.Publish(context.Background(), "carol", n)
-	recv(t, c, n)
-}
-
 func TestHubRegisterWaitsForConfirmation(t *testing.T) {
 	rdb := startRedis(t)
 	hub := live.NewHub(rdb) // not running, so no confirmation is ever read

@@ -98,13 +98,8 @@ func (h *ingestHandler) handle(ctx context.Context, input *ingestInput) (*ingest
 			return err
 		}
 		eventID = ev.ID
-		count, recipients, err := h.fan.Fan(ctx, q, ev)
-		if err != nil {
-			return err
-		}
-		deliveryCount = count
-		inbox = recipients
-		return nil
+		deliveryCount, inbox, err = h.fan.Fan(ctx, q, ev)
+		return err
 	})
 	if err != nil {
 		if store.IsUniqueViolation(err) && input.Body.IdempotencyKey != nil {

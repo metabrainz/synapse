@@ -158,12 +158,10 @@ func (c *Consumer) handleBatch(ctx context.Context, bodies [][]byte) error {
 		for i := range evs {
 			evs[i].ID = ids[i]
 		}
-		count, recipients, err := c.fan.FanBatch(ctx, q, evs)
+		deliveryCount, inbox, err = c.fan.FanBatch(ctx, q, evs)
 		if err != nil {
 			return fmt.Errorf("fanout: %w", err)
 		}
-		deliveryCount = count
-		inbox = recipients
 		return nil
 	})
 	if err == nil {
@@ -205,13 +203,8 @@ func (c *Consumer) processOne(ctx context.Context, ev events.Event) error {
 		if err != nil {
 			return err
 		}
-		n, recipients, err := c.fan.Fan(ctx, q, ev)
-		if err != nil {
-			return err
-		}
-		count = n
-		inbox = recipients
-		return nil
+		count, inbox, err = c.fan.Fan(ctx, q, ev)
+		return err
 	})
 	switch {
 	case err == nil:

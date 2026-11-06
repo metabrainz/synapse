@@ -176,9 +176,6 @@ func main() {
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
-	// Ends open streams so Shutdown isn't held up waiting for them.
-	srv.RegisterOnShutdown(hub.Close)
-
 	go func() {
 		slog.Info("api: listening", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
