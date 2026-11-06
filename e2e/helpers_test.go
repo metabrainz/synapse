@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -440,6 +441,9 @@ func (s *stubIntrospector) grant(token, id string) {
 }
 
 func (s *stubIntrospector) Introspect(_ context.Context, token string) (oauth.Claims, error) {
+	if token == "tok-down" {
+		return oauth.Claims{}, errors.New("introspection down")
+	}
 	s.mu.RLock()
 	claims, ok := s.tokens[token]
 	s.mu.RUnlock()

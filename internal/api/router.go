@@ -97,8 +97,8 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 	}
 
 	// Path-dispatching middleware: applies Surface A or B auth + rate limiting based on
-	// URL prefix. /v1/me/** → Surface B (OAuth); /v1/stream/** authenticates with a
-	// ticket in its handler; /v1/** → Surface A (tenant API key); everything else
+	// URL prefix. /v1/me/** → Surface B (OAuth); /v1/stream/** applies CORS and
+	// OAuth per route; /v1/** → Surface A (tenant API key); everything else
 	// (health check, internal adapter routes) passes through unauthenticated.
 	//
 	// Auth runs before rate limiting so the rate-limit key function can read the
@@ -166,8 +166,16 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 		lifetime = 15 * time.Minute
 	}
 	stream := &streamHandler{hub: d.Hub, tickets: d.Tickets, prefs: d.Preferences, reg: d.Registry, origins: cfg.StreamOrigins, ping: ping, lifetime: lifetime}
-	r.Get("/v1/stream/tenants/{tenant_id}/notifications", stream.tenant)
-	r.Get("/v1/stream/notifications", stream.global)
+	for _, rt := range []struct {
+		path string
+		h    http.HandlerFunc
+	}{
+		{"/v1/stream/tenants/{tenant_id}/notifications", stream.tenant},
+		{"/v1/stream/notifications", stream.global},
+	} {
+		r.With(stream.allowOrigin, userMW).Get(rt.path, rt.h)
+		r.With(stream.allowOrigin).Options(rt.path, stream.preflight)
+	}
 
 	// Huma API — generates OpenAPI spec from handler types.
 	// Spec: GET /openapi.json   Swagger UI: GET /docs

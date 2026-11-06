@@ -18,35 +18,35 @@ import (
 
 const lbOrigin = "https://listenbrainz.org"
 
-// ticket mints a stream ticket for user over the OAuth route.
-func (e *env) ticket(user string) string {
-	e.t.Helper()
+const (
+	tenantStreamPath = "/v1/stream/tenants/" + testTenantID + "/notifications"
+	globalStreamPath = "/v1/stream/notifications"
+)
+
+// token grants an OAuth token for user and returns it.
+func (e *env) token(user string) string {
 	e.stub.grant("tok-"+user, user)
-	r := e.userDo("POST", "/v1/me/notifications/stream-ticket", nil, "tok-"+user)
-	var out struct {
-		Ticket string `json:"ticket"`
-	}
-	decodeJSON(e.t, r, &out)
-	if r.StatusCode != http.StatusOK {
-		e.t.Fatalf("stream ticket: want 200, got %d", r.StatusCode)
-	}
-	return out.Ticket
+	return "tok-" + user
 }
 
-func tenantStream(ticket string) string {
-	return "/v1/stream/tenants/" + testTenantID + "/notifications?ticket=" + ticket
+func (e *env) openStream(path, origin, token string) (*http.Response, *bufio.Reader) {
+	e.t.Helper()
+	return e.streamRequest("GET", path, origin, token)
 }
 
-func (e *env) openStream(path, origin string) (*http.Response, *bufio.Reader) {
+func (e *env) streamRequest(method, path, origin, token string) (*http.Response, *bufio.Reader) {
 	e.t.Helper()
 	ctx, cancel := context.WithTimeout(e.ctx, 10*time.Second)
 	e.t.Cleanup(cancel)
-	req, err := http.NewRequestWithContext(ctx, "GET", e.server.URL+path, nil)
+	req, err := http.NewRequestWithContext(ctx, method, e.server.URL+path, nil)
 	if err != nil {
 		e.t.Fatalf("build request: %v", err)
 	}
 	if origin != "" {
 		req.Header.Set("Origin", origin)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -57,9 +57,9 @@ func (e *env) openStream(path, origin string) (*http.Response, *bufio.Reader) {
 }
 
 // openOK opens a stream, asserts 200 and consumes the leading retry frame.
-func (e *env) openOK(path string) *bufio.Reader {
+func (e *env) openOK(path, token string) *bufio.Reader {
 	e.t.Helper()
-	resp, rd := e.openStream(path, "")
+	resp, rd := e.openStream(path, "", token)
 	if resp.StatusCode != http.StatusOK {
 		e.t.Fatalf("open %s: want 200, got %d", path, resp.StatusCode)
 	}
@@ -119,7 +119,7 @@ func nextInbox(t *testing.T, rd *bufio.Reader) live.Nudge {
 
 func TestStreamHeadersRetryPing(t *testing.T) {
 	e := setup(t)
-	resp, rd := e.openStream(tenantStream(e.ticket("alice")), "")
+	resp, rd := e.openStream(tenantStreamPath, "", e.token("alice"))
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
 	}
@@ -142,7 +142,7 @@ func TestStreamHeadersRetryPing(t *testing.T) {
 
 func TestStreamSurvivesWriteTimeout(t *testing.T) {
 	e := setup(t)
-	rd := e.openOK(tenantStream(e.ticket("alice")))
+	rd := e.openOK(tenantStreamPath, e.token("alice"))
 
 	pings := 0
 	for start := time.Now(); time.Since(start) < 2500*time.Millisecond; {
@@ -157,7 +157,7 @@ func TestStreamSurvivesWriteTimeout(t *testing.T) {
 
 func TestStreamExpires(t *testing.T) {
 	e := setup(t)
-	resp, _ := e.openStream(tenantStream(e.ticket("alice")), "")
+	resp, _ := e.openStream(tenantStreamPath, "", e.token("alice"))
 	start := time.Now()
 	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
 		t.Fatalf("read stream: %v", err)
@@ -173,8 +173,8 @@ func TestStreamTenantFilter(t *testing.T) {
 	if got := e.setPreference("tok-alice", true); got != http.StatusOK {
 		t.Fatalf("enable preference: want 200, got %d", got)
 	}
-	tenantRd := e.openOK(tenantStream(e.ticket("alice")))
-	globalRd := e.openOK("/v1/stream/notifications?ticket=" + e.ticket("alice"))
+	tenantRd := e.openOK(tenantStreamPath, e.token("alice"))
+	globalRd := e.openOK(globalStreamPath, e.token("alice"))
 
 	pub := live.NewPublisher(e.rdb)
 	other := live.Nudge{Kind: live.KindCreated, Tenant: "bookbrainz"}
@@ -195,20 +195,18 @@ func TestStreamTenantFilter(t *testing.T) {
 func TestStreamAuthErrors(t *testing.T) {
 	e := setup(t)
 
-	reused := e.ticket("alice")
-	e.openOK(tenantStream(reused))
-
 	for _, c := range []struct {
-		name string
-		path string
-		want int
+		name  string
+		path  string
+		token string
+		want  int
 	}{
-		{"no ticket", tenantStream(""), http.StatusUnauthorized},
-		{"reused ticket", tenantStream(reused), http.StatusUnauthorized},
-		{"unknown tenant", "/v1/stream/tenants/nope/notifications?ticket=" + e.ticket("alice"), http.StatusNotFound},
-		{"global, preference off", "/v1/stream/notifications?ticket=" + e.ticket("alice"), http.StatusForbidden},
+		{"no token", tenantStreamPath, "", http.StatusUnauthorized},
+		{"inactive token", tenantStreamPath, "tok-nobody", http.StatusUnauthorized},
+		{"unknown tenant", "/v1/stream/tenants/nope/notifications", e.token("alice"), http.StatusNotFound},
+		{"global, preference off", globalStreamPath, e.token("alice"), http.StatusForbidden},
 	} {
-		resp, _ := e.openStream(c.path, "")
+		resp, _ := e.openStream(c.path, "", c.token)
 		resp.Body.Close()
 		if resp.StatusCode != c.want {
 			t.Errorf("%s: want %d, got %d", c.name, c.want, resp.StatusCode)
@@ -216,10 +214,82 @@ func TestStreamAuthErrors(t *testing.T) {
 	}
 }
 
+// The page must be able to read a 401 to know it should refresh its token.
+func TestStreamUnauthorizedHasCORS(t *testing.T) {
+	e := setup(t)
+	resp, _ := e.openStream(tenantStreamPath, lbOrigin, "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != lbOrigin {
+		t.Fatalf("Access-Control-Allow-Origin: want %q, got %q", lbOrigin, got)
+	}
+}
+
+func TestStreamIntrospectionDown(t *testing.T) {
+	e := setup(t)
+	resp, _ := e.openStream(tenantStreamPath, lbOrigin, "tok-down")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != lbOrigin {
+		t.Fatalf("Access-Control-Allow-Origin: want %q, got %q", lbOrigin, got)
+	}
+}
+
+func TestStreamCORSPreflight(t *testing.T) {
+	e := setup(t)
+	preflight := func(path, origin string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequestWithContext(e.ctx, "OPTIONS", e.server.URL+path, nil)
+		if err != nil {
+			t.Fatalf("build request: %v", err)
+		}
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Access-Control-Request-Method", "GET")
+		req.Header.Set("Access-Control-Request-Headers", "authorization")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("preflight: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("preflight %s from %s: want 204, got %d", path, origin, resp.StatusCode)
+		}
+		return resp
+	}
+
+	resp := preflight(tenantStreamPath, lbOrigin)
+	for k, want := range map[string]string{
+		"Access-Control-Allow-Origin":  lbOrigin,
+		"Access-Control-Allow-Methods": "GET",
+		"Access-Control-Allow-Headers": "Authorization",
+		"Access-Control-Max-Age":       "600",
+		"Vary":                         "Origin",
+	} {
+		if got := resp.Header.Get(k); got != want {
+			t.Errorf("%s: want %q, got %q", k, want, got)
+		}
+	}
+
+	if got := preflight(globalStreamPath, lbOrigin).Header.Get("Access-Control-Allow-Origin"); got != lbOrigin {
+		t.Errorf("global preflight: want %q, got %q", lbOrigin, got)
+	}
+
+	resp = preflight(tenantStreamPath, "https://evil.example")
+	for _, k := range []string{"Access-Control-Allow-Origin", "Access-Control-Allow-Headers"} {
+		if got := resp.Header.Get(k); got != "" {
+			t.Errorf("disallowed origin: want no %s, got %q", k, got)
+		}
+	}
+}
+
 func TestStreamCORS(t *testing.T) {
 	e := setup(t)
 
-	resp, _ := e.openStream(tenantStream(e.ticket("alice")), lbOrigin)
+	resp, _ := e.openStream(tenantStreamPath, lbOrigin, e.token("alice"))
 	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != lbOrigin {
 		t.Fatalf("allowed origin: want %q, got %q", lbOrigin, got)
 	}
@@ -230,7 +300,7 @@ func TestStreamCORS(t *testing.T) {
 		t.Fatalf("credentials must not be allowed, got %q", got)
 	}
 
-	resp, _ = e.openStream(tenantStream(e.ticket("alice")), "https://evil.example")
+	resp, _ = e.openStream(tenantStreamPath, "https://evil.example", e.token("alice"))
 	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "" {
 		t.Fatalf("disallowed origin: want no header, got %q", got)
 	}
@@ -240,7 +310,7 @@ func TestStreamHubClosed(t *testing.T) {
 	e := setup(t)
 	e.hub.Close()
 
-	resp, rd := e.openStream(tenantStream(e.ticket("alice")), "")
+	resp, rd := e.openStream(tenantStreamPath, "", e.token("alice"))
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
 	}
@@ -256,7 +326,7 @@ func TestStreamHubClosed(t *testing.T) {
 // The spec's definition of done: a real ingest and a real mark-read reach an open stream.
 func TestStreamEndToEnd(t *testing.T) {
 	e := setup(t)
-	rd := e.openOK(tenantStream(e.ticket("alice")))
+	rd := e.openOK(tenantStreamPath, e.token("alice"))
 
 	r := e.tenantDo("POST", "/v1/events", followBody("alice"), e.apiKey)
 	r.Body.Close()

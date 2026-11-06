@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/metabrainz/synapse/internal/api/middleware"
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/live"
 	"github.com/metabrainz/synapse/internal/store/preferences"
@@ -33,28 +34,19 @@ type streamHandler struct {
 	lifetime time.Duration
 }
 
-// GET /v1/stream/tenants/{tenant_id}/notifications?ticket=
+// GET /v1/stream/tenants/{tenant_id}/notifications
 func (h *streamHandler) tenant(w http.ResponseWriter, r *http.Request) {
 	tenant := chi.URLParam(r, "tenant_id")
-	h.cors(w, r, tenant)
-	uid, ok := h.redeem(w, r)
-	if !ok {
-		return
-	}
 	if !h.reg.HasTenant(tenant) {
 		writeError(w, http.StatusNotFound, "unknown tenant")
 		return
 	}
-	h.serve(w, r, uid, tenant)
+	h.serve(w, r, middleware.UserFromContext(r.Context()), tenant)
 }
 
-// GET /v1/stream/notifications?ticket=
+// GET /v1/stream/notifications
 func (h *streamHandler) global(w http.ResponseWriter, r *http.Request) {
-	h.cors(w, r, "")
-	uid, ok := h.redeem(w, r)
-	if !ok {
-		return
-	}
+	uid := middleware.UserFromContext(r.Context())
 	p, err := h.prefs.Get(r.Context(), uid)
 	if err != nil {
 		slog.Error("stream: load preferences", "user", uid, "err", err)
@@ -68,6 +60,24 @@ func (h *streamHandler) global(w http.ResponseWriter, r *http.Request) {
 	h.serve(w, r, uid, "")
 }
 
+// allowOrigin runs before auth so every response, 401 included, is readable by an allowed page.
+func (h *streamHandler) allowOrigin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.cors(w, r, chi.URLParam(r, "tenant_id"))
+		next.ServeHTTP(w, r)
+	})
+}
+
+// preflight answers the CORS preflight that the Authorization header triggers.
+func (h *streamHandler) preflight(w http.ResponseWriter, _ *http.Request) {
+	if w.Header().Get("Access-Control-Allow-Origin") != "" {
+		w.Header().Set("Access-Control-Allow-Methods", "GET")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization")
+		w.Header().Set("Access-Control-Max-Age", "600")
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // cors allows the origins of tenant, or of every tenant when tenant is "".
 func (h *streamHandler) cors(w http.ResponseWriter, r *http.Request, tenant string) {
 	w.Header().Add("Vary", "Origin")
@@ -78,20 +88,6 @@ func (h *streamHandler) cors(w http.ResponseWriter, r *http.Request, tenant stri
 			return
 		}
 	}
-}
-
-func (h *streamHandler) redeem(w http.ResponseWriter, r *http.Request) (string, bool) {
-	uid, err := h.tickets.Redeem(r.Context(), r.URL.Query().Get("ticket"))
-	if errors.Is(err, live.ErrInvalidTicket) {
-		writeError(w, http.StatusUnauthorized, "invalid stream ticket")
-		return "", false
-	}
-	if err != nil {
-		slog.Error("stream: redeem ticket", "err", err)
-		begin(w)
-		return "", false
-	}
-	return uid, true
 }
 
 // serve streams uid's nudges, only those for tenant unless tenant is "".
