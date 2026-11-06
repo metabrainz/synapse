@@ -42,9 +42,9 @@ Serves two authentication surfaces:
 
 **Surface A — tenant API key** (`/v1/events`, `/v1/events/{id}/deliveries`): internal services publish events and query delivery status. Auth is an O(1) map lookup against the static registry loaded at startup — no DB or cache involved. Routes are rate-limited per tenant via a Redis token bucket.
 
-**Surface B — MetaBrainz OAuth token** (`/v1/me/`*): end-users manage their own channels and subscriptions, read their in-app notifications (`/v1/me/tenants/{tenant}/notifications`, `/v1/me/notifications`) change their preferences (`/v1/me/preferences`) and mint stream tickets (`/v1/me/notifications/stream-ticket`). Each request introspects the bearer token against the MB OAuth endpoint; results are cached in Redis (TTL = min(token expiry, 15 min)) to keep the MB endpoint off the hot path.
+**Surface B — MetaBrainz OAuth token** (`/v1/me/`*): end-users manage their own channels and subscriptions, read their in-app notifications (`/v1/me/tenants/{tenant}/notifications`, `/v1/me/notifications`) and change their preferences (`/v1/me/preferences`). Each request introspects the bearer token against the MB OAuth endpoint; results are cached in Redis (TTL = min(token expiry, 15 min)) to keep the MB endpoint off the hot path.
 
-**Stream routes** (`/v1/stream/`*): browser event streams for the inbox. `EventSource` cannot send an `Authorization` header, so they authenticate with a single-use ticket minted on Surface B instead. See [Live updates](#live-updates).
+**Stream routes** (`/v1/stream/`*): browser event streams for the inbox. They take the same OAuth token as Surface B, checked per route after CORS so an allowed page can read a 401, and answer the CORS preflight the `Authorization` header triggers. See [Live updates](#live-updates).
 
 ### `cmd/ingest` — Ingest consumer
 
@@ -294,17 +294,16 @@ A notification id that belongs to another user, is dismissed or has expired retu
 An open inbox learns about changes over a Server-Sent Events stream instead of polling. The stream carries only a nudge that says "refetch"; the client then reads counts and notifications from the routes above, so the API stays the only source of truth.
 
 ```
-POST /v1/me/notifications/stream-ticket   (OAuth)  →  {"ticket": "…", "expires_in": 30}
-GET  /v1/stream/tenants/{tenant}/notifications?ticket=…   one tenant's nudges
-GET  /v1/stream/notifications?ticket=…                    every tenant's; 403 unless cross_tenant_notifications is on
+GET /v1/stream/tenants/{tenant}/notifications   Authorization: Bearer <token>   one tenant's nudges
+GET /v1/stream/notifications                    Authorization: Bearer <token>   every tenant's; 403 unless cross_tenant_notifications is on
 ```
 
-- **Ticket:** random, stored in Redis for 30 s and deleted when a stream redeems it, so it works once. A missing, used or expired ticket returns 401. Minting returns 503 if Redis is down.
-- **Events:** `retry: 5000` first, then `event: inbox` with `data: {"kind": "created" | "changed", "tenant": "…"}`, and `event: ping` every 25 s to keep proxies from closing an idle stream. `created` is sent after an ingest commits a notification for the user; `changed` after the user reads, reads all or dismisses. The tenant stream drops nudges for other tenants.
+- **Auth:** the user's MetaBrainz OAuth token, checked by the same middleware as `/v1/me/*`. A missing or inactive token returns 401; a failing introspection returns 503. Clients open the stream with `fetch`, since `EventSource` can't send headers.
+- **Events:** `event: inbox` with `data: {"kind": "created" | "changed", "tenant": "…"}`, and `event: ping` every 25 s to keep proxies from closing an idle stream. `created` is sent after an ingest commits a notification for the user; `changed` after the user reads, reads all or dismisses. The tenant stream drops nudges for other tenants.
 - **Nudges can be dropped**, so a client also refetches when it (re)connects and when the tab becomes visible. Several nudges and one nudge mean the same thing: refetch.
 - **CORS:** the response allows the request's `Origin` only if it is listed in that tenant's `tenants.<id>.stream_origins` (any tenant's for the global stream).
-- **Limits:** 32 open streams per user per API instance; the 33rd gets 429. A stream closes after 15–18 minutes, so the client's new ticket re-checks its OAuth token (cached up to 15 min) and preferences. A frame that can't be written within 10 s closes the stream, so a client that stops reading doesn't hold a slot.
-- **Reconnect is client-driven.** A ticket works once, so on `error` the client closes the `EventSource`, backs off, mints a new ticket and reopens. Errors after authentication (Redis or the hub failing) return 200 and end the stream at once, because a non-200 makes `EventSource` stop without firing a normal reconnect. See [Tenant integration](tenant-integration.md#live-updates) for the client contract.
+- **Limits:** 32 open streams per user per API instance; the 33rd gets 429. A stream closes after 15–18 minutes, so reconnecting re-checks the OAuth token (cached up to 15 minutes) and preferences. A frame that can't be written within 10 s closes the stream, so a client that stops reading doesn't hold a slot.
+- **Reconnect is client-driven.** On 401 the client refreshes its token and reconnects; on any other status, a network error or a closed stream it waits a random backoff and reconnects. A Redis or hub failure before the stream starts returns 503. See [Tenant integration](tenant-integration.md#live-updates) for the client contract.
 
 ```
 ingest / API mutation ── commit ──▶ PUBLISH synapse:inbox:{user_id}  (best effort, 500 ms budget)

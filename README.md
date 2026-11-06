@@ -43,7 +43,7 @@ Edit `config.yaml` with your Postgres, RabbitMQ, Redis, and OAuth credentials.
 |-----------|---------|
 | PostgreSQL 16+ | Event storage, delivery tracking, transactional outbox |
 | RabbitMQ 3+ | Message routing between services |
-| Redis 7+ | Rate limiting, OAuth token cache, Telegram connect flow, inbox live updates (pub/sub, stream tickets) |
+| Redis 7+ | Rate limiting, OAuth token cache, Telegram connect flow, inbox live updates (pub/sub) |
 
 ## Testing
 

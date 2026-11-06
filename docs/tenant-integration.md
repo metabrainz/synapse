@@ -82,26 +82,20 @@ External channels are opt-in per user: `/v1/me/channels` to link one, `PUT /v1/m
 Live updates let the badge change without the page polling. Synapse never sends notifications over the stream; it only says "something changed", and your page refetches the count the normal way.
 
 ```
-browser ── 1. get ticket ──▶ your backend ── POST /v1/me/notifications/stream-ticket ──▶ Synapse
-browser ── 2. open stream with ticket ───────────────────────────────────────────────▶ Synapse
-browser ◀─ 3. "inbox" event ──────────────────────────────────────────────────────── Synapse
-browser ── 4. refetch the count ──▶ your backend ──▶ Synapse
+browser ── 1. open stream, Authorization: Bearer <MusicBrainz token> ──▶ Synapse
+browser ◀─ 2. "inbox" event ─────────────────────────────────────────── Synapse
+browser ── 3. refetch the count ──▶ your backend ──▶ Synapse
 ```
 
 ### What you build
 
-**Backend: one endpoint that returns a ticket.** It calls Synapse with the user's OAuth token and passes the ticket to the browser. The browser never sees the token.
+**Backend:** nothing. The browser uses the MusicBrainz token it already has.
+
+**Frontend:** open the stream with `fetch` and refetch when told to. `EventSource` can't send the `Authorization` header, so it can't be used.
 
 ```
-POST /v1/me/notifications/stream-ticket
-→ 200 {"ticket": "…", "expires_in": 30}
-→ 503 live updates are down; the page still works without them
-```
-
-**Frontend: open the stream and refetch when told to.**
-
-```
-GET <synapse>/v1/stream/tenants/{tenant}/notifications?ticket=<ticket>
+GET <synapse>/v1/stream/tenants/{tenant}/notifications
+Authorization: Bearer <MusicBrainz token>
 ```
 
 Your page's origin must be listed in `stream_origins`. The stream sends two kinds of events:
@@ -111,22 +105,25 @@ Your page's origin must be listed in `stream_origins`. The stream sends two kind
 | `inbox` | A notification arrived, or the user read or dismissed one somewhere | Refetch the unread count |
 | `ping` | Every 25 s, to show the stream is alive | Nothing |
 
-### The one rule: a ticket works once
+### Reconnecting
 
-The stream closes regularly: after about 15 minutes, when Synapse restarts, or when the network drops. Each time, get a **new** ticket and reconnect. The browser's built-in reconnect reuses the old ticket and fails, so don't rely on it.
+The stream closes regularly: after about 15 minutes, when Synapse restarts, or when the network drops. Reconnect every time:
+
+- **401:** the token expired. Refresh it (`refreshMBToken` in ListenBrainz), then reconnect.
+- **Anything else:** wait a random time and reconnect.
 
 Since anything can happen while the stream is closed, refetch the count every time it opens.
 
 ### Copy this
 
 ```js
-function connectInbox({ synapse, tenant, getTicket, refetch }) {
-  let es, watchdog, delay = 5000;
+function connectInbox({ synapse, tenant, getToken, refreshToken, refetch }) {
+  let ctrl, watchdog, delay = 5000;
 
-  // Close, wait a random time, then reconnect with a new ticket.
-  // The random wait stops every user reconnecting at the same moment.
+  // Wait a random time, then reconnect. The random wait stops every user
+  // reconnecting at the same moment.
   const retry = () => {
-    es?.close();
+    ctrl?.abort();
     clearTimeout(watchdog);
     setTimeout(open, Math.random() * delay);
     delay = Math.min(delay * 2, 60000);
@@ -139,14 +136,41 @@ function connectInbox({ synapse, tenant, getTicket, refetch }) {
   };
 
   async function open() {
-    let ticket;
-    try { ticket = await getTicket(); } catch { return retry(); }
-    es = new EventSource(`${synapse}/v1/stream/tenants/${tenant}/notifications?ticket=${encodeURIComponent(ticket)}`);
-    es.onopen = () => { delay = 5000; alive(); refetch(); };
-    es.addEventListener("ping", alive);
-    // Wait up to 3 s so users notified together don't all refetch at once.
-    es.addEventListener("inbox", () => { alive(); setTimeout(refetch, Math.random() * 3000); });
-    es.onerror = retry;
+    ctrl = new AbortController();
+    try {
+      const res = await fetch(`${synapse}/v1/stream/tenants/${tenant}/notifications`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+        signal: ctrl.signal,
+      });
+      if (res.status === 401) {
+        await refreshToken();
+        return retry();
+      }
+      if (!res.ok) return retry();
+
+      delay = 5000;
+      alive();
+      refetch();
+
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += value;
+        let end;
+        while ((end = buf.indexOf("\n\n")) >= 0) {
+          const event = /^event: (.*)$/m.exec(buf.slice(0, end))?.[1];
+          buf = buf.slice(end + 2);
+          alive();
+          // Wait up to 3 s so users notified together don't all refetch at once.
+          if (event === "inbox") setTimeout(refetch, Math.random() * 3000);
+        }
+      }
+    } catch (err) {
+      if (err.name === "AbortError") return;
+    }
+    retry();
   }
 
   open();
@@ -162,9 +186,10 @@ function connectInbox({ synapse, tenant, getTicket, refetch }) {
 - **Proxy:** serve the stream over HTTP/2 with response buffering off. Browsers allow only six HTTP/1.1 connections per site, and a few open tabs use them up.
 - **All tenants in one inbox:** use `/v1/me/notifications…` and `/v1/stream/notifications`. Both need the user's `cross_tenant_notifications` preference.
 
-| Error | Cause |
-|---|---|
-| 401 | Ticket missing, already used, or older than 30 s |
-| 403 | Global stream while `cross_tenant_notifications` is off |
-| 404 | Unknown tenant |
-| 429 | The user has more than 32 streams open |
+| Status | Cause | What to do |
+|---|---|---|
+| 401 | Token missing or expired | Refresh the token, reconnect |
+| 403 | Global stream while `cross_tenant_notifications` is off | Use the tenant stream |
+| 404 | Unknown tenant | Fix the URL |
+| 429 | The user has more than 32 streams open | Back off |
+| 503 | Live updates are down | Back off; the inbox still works |
