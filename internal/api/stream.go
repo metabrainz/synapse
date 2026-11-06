@@ -16,6 +16,10 @@ import (
 	"github.com/metabrainz/synapse/internal/store/preferences"
 )
 
+// streamWriteTimeout bounds each frame write, so a client that stops reading
+// releases its goroutine and stream slot.
+const streamWriteTimeout = 10 * time.Second
+
 // streamHandler serves the inbox SSE streams. They are plain chi routes because
 // huma can't clear the write deadline or flush per event.
 type streamHandler struct {
@@ -128,10 +132,7 @@ func (h *streamHandler) serve(w http.ResponseWriter, r *http.Request, uid, tenan
 		case <-ping.C:
 			event, data = "ping", []byte("{}")
 		}
-		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data); err != nil {
-			return
-		}
-		if err := rc.Flush(); err != nil {
+		if err := writeFrame(w, rc, fmt.Sprintf("event: %s\ndata: %s\n\n", event, data)); err != nil {
 			return
 		}
 	}
@@ -145,13 +146,18 @@ func begin(w http.ResponseWriter) (*http.ResponseController, error) {
 	hdr.Set("Cache-Control", "no-store")
 	hdr.Set("X-Accel-Buffering", "no")
 	rc := http.NewResponseController(w)
-	// The server's WriteTimeout would otherwise cut every stream after 30s.
-	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
-		slog.Error("stream: clear write deadline", "err", err)
-		return nil, err
+	return rc, writeFrame(w, rc, "retry: 5000\n\n")
+}
+
+// writeFrame replaces the server's WriteTimeout, which would cut every stream
+// after 30s, with a deadline per frame.
+func writeFrame(w http.ResponseWriter, rc *http.ResponseController, frame string) error {
+	if err := rc.SetWriteDeadline(time.Now().Add(streamWriteTimeout)); err != nil {
+		slog.Error("stream: set write deadline", "err", err)
+		return err
 	}
-	if _, err := io.WriteString(w, "retry: 5000\n\n"); err != nil {
-		return nil, err
+	if _, err := io.WriteString(w, frame); err != nil {
+		return err
 	}
-	return rc, rc.Flush()
+	return rc.Flush()
 }
