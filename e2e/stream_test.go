@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -369,4 +370,71 @@ func TestStreamEndToEnd(t *testing.T) {
 	if n := nextInbox(t, rd); n != (live.Nudge{Kind: live.KindChanged, Tenant: testTenantID}) {
 		t.Fatalf("want changed, got %+v", n)
 	}
+}
+
+func TestStreamDeliversToManyStreams(t *testing.T) {
+	e := setup(t, func(c *api.Config, _ *redis.Client) { c.StreamLifetime = time.Minute })
+	const users = 2000
+	got := make([]chan string, users)
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 200)
+	for i := range users {
+		got[i] = make(chan string, 2)
+		tok := e.token(fmt.Sprint("r", i))
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			req, _ := http.NewRequestWithContext(e.ctx, "GET", e.server.URL+tenantStreamPath, nil)
+			req.Header.Set("Authorization", "Bearer "+tok)
+			resp, err := http.DefaultClient.Do(req)
+			<-sem
+			if err != nil {
+				got[i] <- err.Error()
+				return
+			}
+			if resp.StatusCode != http.StatusOK {
+				got[i] <- fmt.Sprint("status ", resp.StatusCode)
+				return
+			}
+			got[i] <- "open"
+			rd := bufio.NewReader(resp.Body)
+			for {
+				line, err := rd.ReadString('\n')
+				if err != nil {
+					return
+				}
+				if strings.HasPrefix(line, "event: inbox") {
+					got[i] <- "inbox"
+					return
+				}
+			}
+		}()
+	}
+	for i := range users {
+		if s := <-got[i]; s != "open" {
+			t.Fatalf("r%d: %s", i, s)
+		}
+	}
+
+	ts := make([]live.Target, users)
+	for i := range ts {
+		ts[i] = live.Target{UserID: fmt.Sprint("r", i), Nudge: live.Nudge{Kind: live.KindCreated, Tenant: testTenantID}}
+	}
+	live.NewPublisher(e.rdb).PublishMany(e.ctx, ts)
+
+	var missing []int
+	deadline := time.Now().Add(5 * time.Second)
+	for i := range users {
+		select {
+		case <-got[i]:
+		case <-time.After(time.Until(deadline)):
+			missing = append(missing, i)
+		}
+	}
+	if len(missing) > 0 {
+		t.Fatalf("%d of %d streams got no nudge, e.g. r%d", len(missing), users, missing[0])
+	}
+	e.server.CloseClientConnections()
+	wg.Wait()
 }

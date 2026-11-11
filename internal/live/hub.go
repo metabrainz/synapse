@@ -45,10 +45,21 @@ type Hub struct {
 	closed      bool
 }
 
+// NewHub gives the hub its own Redis client pinned to RESP2. With go-redis's
+// default RESP3, the hub lost nudges once thousands of users had streams open.
 func NewHub(rdb *redis.Client) *Hub {
+	o := rdb.Options()
+	sub := redis.NewClient(&redis.Options{
+		Addr:      o.Addr,
+		Username:  o.Username,
+		Password:  o.Password,
+		DB:        o.DB,
+		TLSConfig: o.TLSConfig,
+		Protocol:  2,
+	})
 	return &Hub{
-		rdb:         rdb,
-		ps:          rdb.Subscribe(context.Background()),
+		rdb:         sub,
+		ps:          sub.Subscribe(context.Background()),
 		streams:     map[string]*userStreams{},
 		unconfirmed: map[string]int{},
 	}
@@ -172,6 +183,7 @@ func (h *Hub) Close() {
 	h.closed = true
 	h.dropAll()
 	_ = h.ps.Close()
+	_ = h.rdb.Close()
 }
 
 func (h *Hub) unregister(channel string, ch chan Nudge) {
