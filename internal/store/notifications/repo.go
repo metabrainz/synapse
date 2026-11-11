@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/metabrainz/synapse/internal/store"
 )
@@ -179,34 +180,45 @@ func (r *Repo) UnreadCountsByTenant(ctx context.Context, userID string) (map[str
 	return out, rows.Err()
 }
 
-// MarkRead is idempotent: re-marking keeps the original read_at.
-func (r *Repo) MarkRead(ctx context.Context, userID, tenantID string, id int64) error {
+// MarkRead is idempotent: re-marking keeps the original read_at. It returns the notification's tenant.
+func (r *Repo) MarkRead(ctx context.Context, userID, tenantID string, id int64) (string, error) {
 	where, args := inboxWhere(userID, tenantID)
 	args = append(args, id)
 	return r.updateOne(ctx,
-		fmt.Sprintf(`UPDATE notifications n SET read_at = COALESCE(n.read_at, now()) WHERE n.id = $%d AND `, len(args))+where, args...)
+		fmt.Sprintf(`UPDATE notifications n SET read_at = COALESCE(n.read_at, now()) WHERE n.id = $%d AND `, len(args))+where+` RETURNING n.tenant_id`, args...)
 }
 
-func (r *Repo) Dismiss(ctx context.Context, userID, tenantID string, id int64) error {
+func (r *Repo) Dismiss(ctx context.Context, userID, tenantID string, id int64) (string, error) {
 	where, args := inboxWhere(userID, tenantID)
 	args = append(args, id)
 	return r.updateOne(ctx,
-		fmt.Sprintf(`UPDATE notifications n SET dismissed_at = now() WHERE n.id = $%d AND `, len(args))+where, args...)
+		fmt.Sprintf(`UPDATE notifications n SET dismissed_at = now() WHERE n.id = $%d AND `, len(args))+where+` RETURNING n.tenant_id`, args...)
 }
 
-func (r *Repo) MarkAllRead(ctx context.Context, userID, tenantID string) (int64, error) {
+// MarkAllRead returns the number of newly read notifications per tenant.
+func (r *Repo) MarkAllRead(ctx context.Context, userID, tenantID string) (map[string]int64, error) {
 	where, args := inboxWhere(userID, tenantID)
-	tag, err := r.pool.Exec(ctx, `UPDATE notifications n SET read_at = now() WHERE n.read_at IS NULL AND `+where, args...)
-	return tag.RowsAffected(), err
-}
-
-func (r *Repo) updateOne(ctx context.Context, query string, args ...any) error {
-	tag, err := r.pool.Exec(ctx, query, args...)
+	rows, err := r.pool.Query(ctx, `UPDATE notifications n SET read_at = now() WHERE n.read_at IS NULL AND `+where+` RETURNING n.tenant_id`, args...)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var tenant string
+		if err := rows.Scan(&tenant); err != nil {
+			return nil, err
+		}
+		out[tenant]++
 	}
-	return nil
+	return out, rows.Err()
+}
+
+func (r *Repo) updateOne(ctx context.Context, query string, args ...any) (string, error) {
+	var tenant string
+	err := r.pool.QueryRow(ctx, query, args...).Scan(&tenant)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return tenant, err
 }

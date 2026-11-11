@@ -43,7 +43,7 @@ Edit `config.yaml` with your Postgres, RabbitMQ, Redis, and OAuth credentials.
 |-----------|---------|
 | PostgreSQL 16+ | Event storage, delivery tracking, transactional outbox |
 | RabbitMQ 3+ | Message routing between services |
-| Redis 7+ | Rate limiting, OAuth token cache, Telegram connect flow |
+| Redis 7+ | Rate limiting, OAuth token cache, Telegram connect flow, inbox live updates (pub/sub) |
 
 ## Testing
 
@@ -82,3 +82,4 @@ It also creates future monthly partitions for the deliveries table and drops par
 | [Relay](docs/relay.md) | Outbox relay, publisher confirms, crash recovery |
 | [Failure handling](docs/failure-handling.md) | What happens when each dependency goes down |
 | [Infrastructure primer](docs/infra.md) | RabbitMQ and Redis fundamentals |
+| [Tenant integration](docs/tenant-integration.md) | Onboarding a tenant, publishing events, building the inbox and live updates |

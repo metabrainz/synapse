@@ -16,6 +16,7 @@ import (
 	"github.com/metabrainz/synapse/internal/broker/rabbitmq"
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/live"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/events"
 	"golang.org/x/sync/errgroup"
@@ -42,10 +43,11 @@ type Consumer struct {
 	pool *pgxpool.Pool
 	fan  *fanout.Fanout
 	reg  *eventtype.Registry
+	pub  *live.Publisher
 }
 
-func NewConsumer(pool *pgxpool.Pool, fan *fanout.Fanout, reg *eventtype.Registry) *Consumer {
-	return &Consumer{pool: pool, fan: fan, reg: reg}
+func NewConsumer(pool *pgxpool.Pool, fan *fanout.Fanout, reg *eventtype.Registry, pub *live.Publisher) *Consumer {
+	return &Consumer{pool: pool, fan: fan, reg: reg, pub: pub}
 }
 
 // Run starts workers goroutines, each collecting up to batchSize messages per
@@ -147,6 +149,7 @@ func (c *Consumer) handleBatch(ctx context.Context, bodies [][]byte) error {
 	}
 
 	var deliveryCount int
+	var inbox []fanout.InboxRecipient
 	err := store.WithTx(ctx, c.pool, func(q store.Querier) error {
 		ids, err := events.InsertBatch(ctx, q, evs)
 		if err != nil {
@@ -155,14 +158,14 @@ func (c *Consumer) handleBatch(ctx context.Context, bodies [][]byte) error {
 		for i := range evs {
 			evs[i].ID = ids[i]
 		}
-		count, err := c.fan.FanBatch(ctx, q, evs)
+		deliveryCount, inbox, err = c.fan.FanBatch(ctx, q, evs)
 		if err != nil {
 			return fmt.Errorf("fanout: %w", err)
 		}
-		deliveryCount = count
 		return nil
 	})
 	if err == nil {
+		c.pub.PublishMany(ctx, fanout.CreatedNudges(inbox))
 		slog.Info("ingest: batch processed", "events", len(evs), "deliveries", deliveryCount)
 		return nil
 	}
@@ -194,20 +197,18 @@ func (c *Consumer) handleEach(ctx context.Context, evs []events.Event) error {
 //     if they carry an idempotency key; events without one may be inserted twice.
 func (c *Consumer) processOne(ctx context.Context, ev events.Event) error {
 	var count int
+	var inbox []fanout.InboxRecipient
 	err := store.WithTx(ctx, c.pool, func(q store.Querier) error {
 		ev, err := events.Insert(ctx, q, ev)
 		if err != nil {
 			return err
 		}
-		n, err := c.fan.Fan(ctx, q, ev)
-		if err != nil {
-			return err
-		}
-		count = n
-		return nil
+		count, inbox, err = c.fan.Fan(ctx, q, ev)
+		return err
 	})
 	switch {
 	case err == nil:
+		c.pub.PublishMany(ctx, fanout.CreatedNudges(inbox))
 		slog.Info("ingest: event processed", "tenant", ev.TenantID, "event_type", ev.EventType, "deliveries", count)
 		return nil
 	case store.IsUniqueViolation(err):

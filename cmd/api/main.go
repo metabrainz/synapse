@@ -17,6 +17,7 @@ import (
 	"github.com/metabrainz/synapse/internal/config"
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/live"
 	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/observability"
 	"github.com/metabrainz/synapse/internal/ratelimit"
@@ -139,13 +140,17 @@ func main() {
 		limiter = ratelimit.New(rdb, cfg.RateLimit.Burst, cfg.RateLimit.RatePerSec)
 	}
 
+	hub := live.NewHub(rdb)
+	go hub.Run(ctx)
+
 	router := api.NewRouter(
 		api.Config{
 			Introspector: introspector,
 			Health: api.HealthChecks{
 				Redis: func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
 			},
-			Limiter: limiter,
+			Limiter:       limiter,
+			StreamOrigins: cfg.TenantStreamOrigins(),
 		},
 		api.Deps{
 			Pool:           pool,
@@ -158,6 +163,8 @@ func main() {
 			Preferences:    prefs,
 			Fanout:         fan,
 			Registry:       reg,
+			Live:           live.NewPublisher(rdb),
+			Hub:            hub,
 		},
 	)
 
@@ -168,7 +175,6 @@ func main() {
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
-
 	go func() {
 		slog.Info("api: listening", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
