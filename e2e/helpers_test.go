@@ -439,8 +439,12 @@ func newStubIntrospector() *stubIntrospector {
 }
 
 func (s *stubIntrospector) grant(token, id string) {
+	s.grantClaims(token, oauth.Claims{ID: id, Read: true, Full: true})
+}
+
+func (s *stubIntrospector) grantClaims(token string, c oauth.Claims) {
 	s.mu.Lock()
-	s.tokens[token] = oauth.Claims{ID: id}
+	s.tokens[token] = c
 	s.mu.Unlock()
 }
 

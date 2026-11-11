@@ -51,6 +51,14 @@ func NewUserAuth(i oauth.Introspector, repo UserRepo) func(http.Handler) http.Ha
 				return
 			}
 
+			// EscapedPath is what chi routes on.
+			scope := RequiredScope(r.URL.EscapedPath())
+			if !claims.Full && !(scope == oauth.ScopeRead && claims.Read) {
+				w.Header().Set("WWW-Authenticate", `Bearer realm="synapse", error="insufficient_scope", scope="`+scope+`"`)
+				writeJSONError(w, http.StatusForbidden, "insufficient scope")
+				return
+			}
+
 			if err := repo.Upsert(r.Context(), claims.ID, claims.Username); err != nil {
 				slog.Error("user oauth: upsert failed", "err", err)
 				writeJSONError(w, http.StatusServiceUnavailable, "service unavailable")
@@ -61,6 +69,25 @@ func NewUserAuth(i oauth.Introspector, repo UserRepo) func(http.Handler) http.Ha
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// RequiredScope returns the OAuth scope a request path needs: oauth.ScopeRead
+// for the notification routes and streams, oauth.ScopeFull for everything else.
+func RequiredScope(path string) string {
+	if strings.HasPrefix(path, "/v1/stream/") {
+		return oauth.ScopeRead
+	}
+	rest, ok := strings.CutPrefix(path, "/v1/me/")
+	if !ok {
+		return oauth.ScopeFull
+	}
+	if t, ok := strings.CutPrefix(rest, "tenants/"); ok {
+		_, rest, _ = strings.Cut(t, "/")
+	}
+	if rest == "notifications" || strings.HasPrefix(rest, "notifications/") {
+		return oauth.ScopeRead
+	}
+	return oauth.ScopeFull
 }
 
 // UserFromContext returns the authenticated user's stable MetaBrainz user ID from context,
