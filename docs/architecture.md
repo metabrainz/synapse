@@ -44,7 +44,7 @@ Serves two authentication surfaces:
 
 **Surface B — MetaBrainz OAuth token** (`/v1/me/`*): end-users manage their own channels and subscriptions, read their in-app notifications (`/v1/me/tenants/{tenant}/notifications`, `/v1/me/notifications`) and change their preferences (`/v1/me/preferences`). Each request introspects the bearer token against the MB OAuth endpoint, and the token needs a restricted Synapse scope: `synapse:notifications:inbox` for the notification routes and streams, `synapse:notifications` for everything (403 `insufficient_scope` otherwise); results are cached in Redis (TTL = min(token expiry, 15 min)) to keep the MB endpoint off the hot path.
 
-**Stream routes** (`/v1/stream/`*): browser event streams for the inbox. They take the same OAuth token as Surface B, checked per route after CORS so an allowed page can read a 401, and answer the CORS preflight the `Authorization` header triggers. See [Live updates](#live-updates).
+**Stream routes** (`/v1/stream/`*): browser event streams for the inbox. They take the same OAuth token as Surface B, checked after CORS so an allowed page can read a 401, and answer the CORS preflight the `Authorization` header triggers. See [Live updates](#live-updates).
 
 ### `cmd/ingest` — Ingest consumer
 

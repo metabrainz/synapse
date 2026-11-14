@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
-	"slices"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -28,7 +27,6 @@ type streamHandler struct {
 	hub      *live.Hub
 	prefs    *preferences.Repo
 	reg      *eventtype.Registry
-	origins  map[string][]string
 	ping     time.Duration
 	lifetime time.Duration
 }
@@ -57,41 +55,6 @@ func (h *streamHandler) global(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.serve(w, r, uid, "")
-}
-
-// allowOrigin runs before auth so every response, 401 included, is readable by an allowed page.
-func (h *streamHandler) allowOrigin(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tenant := chi.URLParam(r, "tenant_id")
-		// An unknown tenant has no origins of its own; any tenant's page may read its 404.
-		if !h.reg.HasTenant(tenant) {
-			tenant = ""
-		}
-		h.cors(w, r, tenant)
-		next.ServeHTTP(w, r)
-	})
-}
-
-// preflight answers the CORS preflight that the Authorization header triggers.
-func (h *streamHandler) preflight(w http.ResponseWriter, _ *http.Request) {
-	if w.Header().Get("Access-Control-Allow-Origin") != "" {
-		w.Header().Set("Access-Control-Allow-Methods", "GET")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization")
-		w.Header().Set("Access-Control-Max-Age", "600")
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// cors allows the origins of tenant, or of every tenant when tenant is "".
-func (h *streamHandler) cors(w http.ResponseWriter, r *http.Request, tenant string) {
-	w.Header().Add("Vary", "Origin")
-	origin := r.Header.Get("Origin")
-	for id, allowed := range h.origins {
-		if (tenant == "" || id == tenant) && slices.Contains(allowed, origin) {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			return
-		}
-	}
 }
 
 // serve streams uid's nudges, only those for tenant unless tenant is "".
