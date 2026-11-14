@@ -103,14 +103,16 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 	}
 
 	origins := corsOrigins(cfg.StreamOrigins)
+	meCORS := origins.middleware(d.Registry, tenantAfter("/v1/me/tenants/"),
+		[]string{"GET", "POST", "PUT", "PATCH", "DELETE"}, []string{"Authorization", "Content-Type"})
 	streamCORS := origins.middleware(d.Registry, tenantAfter("/v1/stream/tenants/"),
 		[]string{"GET"}, []string{"Authorization"})
 
 	// Path-dispatching middleware: applies Surface A or B auth + rate limiting based on
-	// URL prefix. /v1/me/** → Surface B (OAuth); /v1/stream/** → CORS, then
-	// Surface B, with the preflight answered before auth; /v1/** → Surface A
-	// (tenant API key); everything else (health check, internal adapter routes)
-	// passes through unauthenticated.
+	// URL prefix. /v1/me/** and /v1/stream/** → CORS, then Surface B (OAuth);
+	// /v1/** → Surface A (tenant API key); everything else (health check,
+	// internal adapter routes) passes through unauthenticated. CORS answers the
+	// preflight before auth.
 	//
 	// Auth runs before rate limiting so the rate-limit key function can read the
 	// tenant/user ID set in context by auth.
@@ -126,7 +128,7 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 		}
 		surfaceA := authMW(surfaceAInner)
 
-		surfaceB := userMW(userLimit(next))
+		surfaceB := meCORS(userMW(userLimit(next)))
 		stream := streamCORS(userMW(userLimit(next)))
 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
