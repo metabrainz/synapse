@@ -63,7 +63,12 @@ func (followEvent) Telegram() string      { return `{{str .Payload "actor" "user
 
 ## 3. Inbox
 
-All inbox routes take the user's OAuth token; call them from your backend. Full list in [Reading notifications](architecture.md#reading-notifications).
+All inbox routes take the user's OAuth token:
+
+- `synapse:notifications:inbox`: notification routes and streams. Safe to put on the token the browser holds.
+- `synapse:notifications`: everything, including channels, subscriptions and preferences. Keep it on your backend.
+
+Both scopes are restricted: ask a MetaBrainz admin to grant them to your OAuth client before you request them, or login fails with `invalid_scope`. Full list in [Reading notifications](architecture.md#reading-notifications).
 
 | UI | Route |
 |---|---|
@@ -157,7 +162,7 @@ function connectInbox({ synapse, tenant, getToken, refreshToken, refetch }) {
         await refreshToken();
         return retry();
       }
-      // Retrying can't fix these: wrong tenant, or the cross-tenant preference is off.
+      // Retrying can't fix these: missing scope, wrong tenant, or the cross-tenant preference is off.
       if (res.status === 403 || res.status === 404) return stop();
       if (!res.ok) return retry();
 
@@ -204,7 +209,7 @@ function connectInbox({ synapse, tenant, getToken, refreshToken, refetch }) {
 | Status | Cause | What to do |
 |---|---|---|
 | 401 | Token missing or expired | Refresh the token, reconnect |
-| 403 | Global stream while `cross_tenant_notifications` is off | Use the tenant stream |
+| 403 | Token lacks `synapse:notifications:inbox` (`insufficient_scope`), or global stream while `cross_tenant_notifications` is off | Log in again with the scope; use the tenant stream |
 | 404 | Unknown tenant | Fix the URL |
 | 429 | The user has more than 32 streams open | Back off |
 | 503 | Live updates are down | Back off; the inbox still works |

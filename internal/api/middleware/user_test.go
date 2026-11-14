@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/metabrainz/synapse/internal/api/middleware"
@@ -20,12 +21,18 @@ func (s *stubIntrospector) Introspect(_ context.Context, _ string) (oauth.Claims
 	return s.claims, s.err
 }
 
-type stubUserRepo struct{ upsertErr error }
+type stubUserRepo struct {
+	upsertErr error
+	upserts   int
+}
 
-func (s *stubUserRepo) Upsert(_ context.Context, _, _ string) error { return s.upsertErr }
+func (s *stubUserRepo) Upsert(_ context.Context, _, _ string) error {
+	s.upserts++
+	return s.upsertErr
+}
 
 func TestNewUserAuth_ValidToken(t *testing.T) {
-	mw := middleware.NewUserAuth(&stubIntrospector{claims: oauth.Claims{ID: "42"}}, &stubUserRepo{})
+	mw := middleware.NewUserAuth(&stubIntrospector{claims: oauth.Claims{ID: "42", Inbox: true, Full: true}}, &stubUserRepo{})
 
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		uid := middleware.UserFromContext(r.Context())
@@ -78,7 +85,7 @@ func TestNewUserAuth_InactiveToken(t *testing.T) {
 
 func TestNewUserAuth_UpsertError(t *testing.T) {
 	mw := middleware.NewUserAuth(
-		&stubIntrospector{claims: oauth.Claims{ID: "42"}},
+		&stubIntrospector{claims: oauth.Claims{ID: "42", Inbox: true, Full: true}},
 		&stubUserRepo{upsertErr: errors.New("db down")},
 	)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -92,5 +99,65 @@ func TestNewUserAuth_UpsertError(t *testing.T) {
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("want 503, got %d", w.Code)
+	}
+}
+
+func TestNewUserAuth_Scopes(t *testing.T) {
+	var (
+		none  = oauth.Claims{ID: "42"}
+		inbox = oauth.Claims{ID: "42", Inbox: true}
+		full  = oauth.Claims{ID: "42", Inbox: true, Full: true}
+	)
+	// Per-route coverage lives in api.TestDocumentedScopesMatchEnforced.
+	inboxRoutes := []string{
+		"POST /v1/me/tenants/listenbrainz/notifications/7/read",
+		"GET /v1/me/notifications",
+		"GET /v1/stream/tenants/listenbrainz/notifications",
+	}
+	fullRoutes := []string{
+		"POST /v1/me/channels",
+		// a tenant named "notifications" is still a channels route
+		"GET /v1/me/tenants/notifications/channels",
+		// chi routes this to the channels handler; the check must not decode it
+		"GET /v1/me/tenants/a%2Fnotifications/channels",
+	}
+	const (
+		inboxHeader = `Bearer realm="synapse", error="insufficient_scope", scope="synapse:notifications:inbox"`
+		fullHeader  = `Bearer realm="synapse", error="insufficient_scope", scope="synapse:notifications"`
+	)
+
+	check := func(t *testing.T, claims oauth.Claims, route string, wantStatus int, wantHeader string) {
+		t.Helper()
+		repo := &stubUserRepo{}
+		mw := middleware.NewUserAuth(&stubIntrospector{claims: claims}, repo)
+		handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		method, path, _ := strings.Cut(route, " ")
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(method, path, nil)
+		r.Header.Set("Authorization", "Bearer tok")
+		handler.ServeHTTP(w, r)
+
+		if w.Code != wantStatus {
+			t.Errorf("%s: status %d, want %d", route, w.Code, wantStatus)
+		}
+		if got := w.Header().Get("WWW-Authenticate"); got != wantHeader {
+			t.Errorf("%s: WWW-Authenticate %q, want %q", route, got, wantHeader)
+		}
+		if wantUpsert := wantStatus == http.StatusOK; (repo.upserts > 0) != wantUpsert {
+			t.Errorf("%s: upserted=%v, want %v", route, repo.upserts > 0, wantUpsert)
+		}
+	}
+
+	for _, route := range inboxRoutes {
+		check(t, none, route, http.StatusForbidden, inboxHeader)
+		check(t, inbox, route, http.StatusOK, "")
+		check(t, full, route, http.StatusOK, "")
+	}
+	for _, route := range fullRoutes {
+		check(t, none, route, http.StatusForbidden, fullHeader)
+		check(t, inbox, route, http.StatusForbidden, fullHeader)
+		check(t, full, route, http.StatusOK, "")
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/live"
+	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/store/notifications"
 	"github.com/metabrainz/synapse/internal/store/preferences"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
@@ -22,8 +23,9 @@ import (
 )
 
 var (
-	surfaceASec = []map[string][]string{{"TenantAPIKey": {}}}
-	surfaceBSec = []map[string][]string{{"UserOAuth": {}}}
+	surfaceASec   = []map[string][]string{{"TenantAPIKey": {}}}
+	surfaceBInbox = []map[string][]string{{"UserOAuth": {oauth.ScopeInbox}}}
+	surfaceBFull  = []map[string][]string{{"UserOAuth": {oauth.ScopeFull}}}
 )
 
 func registerRoutes(
@@ -80,7 +82,7 @@ func registerRoutes(
 		Path:        "/v1/me/channels",
 		Summary:     "List the authenticated user's notification channels",
 		Tags:        []string{"channels"},
-		Security:    surfaceBSec,
+		Security:    surfaceBFull,
 	}, me.listChannels)
 
 	huma.Register(api, huma.Operation{
@@ -90,7 +92,7 @@ func registerRoutes(
 		Summary:       "Create a new notification channel",
 		Tags:          []string{"channels"},
 		DefaultStatus: http.StatusCreated,
-		Security:      surfaceBSec,
+		Security:      surfaceBFull,
 	}, me.createChannel)
 
 	huma.Register(api, huma.Operation{
@@ -100,7 +102,7 @@ func registerRoutes(
 		Summary:       "Delete a notification channel",
 		Tags:          []string{"channels"},
 		DefaultStatus: http.StatusNoContent,
-		Security:      surfaceBSec,
+		Security:      surfaceBFull,
 	}, me.deleteChannel)
 
 	// Catalog — read-only view of what a tenant exposes.
@@ -110,7 +112,7 @@ func registerRoutes(
 		Path:        "/v1/me/channel-types",
 		Summary:     "List notification channel types enabled on this Synapse instance",
 		Tags:        []string{"catalog"},
-		Security:    surfaceBSec,
+		Security:    surfaceBFull,
 	}, me.listChannelTypes)
 
 	huma.Register(api, huma.Operation{
@@ -119,7 +121,7 @@ func registerRoutes(
 		Path:        "/v1/me/tenants/{tenant_id}/event-types",
 		Summary:     "List event types available for a tenant",
 		Tags:        []string{"catalog"},
-		Security:    surfaceBSec,
+		Security:    surfaceBFull,
 	}, me.listTenantEventTypes)
 
 	// Tenant channel mappings — which channel receives deliveries for a given tenant.
@@ -129,7 +131,7 @@ func registerRoutes(
 		Path:        "/v1/me/tenants/{tenant_id}/channels",
 		Summary:     "List the user's channel mappings for a tenant",
 		Tags:        []string{"tenant-channels"},
-		Security:    surfaceBSec,
+		Security:    surfaceBFull,
 	}, me.listTenantChannels)
 
 	huma.Register(api, huma.Operation{
@@ -139,7 +141,7 @@ func registerRoutes(
 		Summary:       "Assign a channel to receive deliveries for a tenant",
 		Tags:          []string{"tenant-channels"},
 		DefaultStatus: http.StatusNoContent,
-		Security:      surfaceBSec,
+		Security:      surfaceBFull,
 	}, me.assignTenantChannel)
 
 	huma.Register(api, huma.Operation{
@@ -149,7 +151,7 @@ func registerRoutes(
 		Summary:       "Remove the channel mapping for a tenant",
 		Tags:          []string{"tenant-channels"},
 		DefaultStatus: http.StatusNoContent,
-		Security:      surfaceBSec,
+		Security:      surfaceBFull,
 	}, me.removeTenantChannel)
 
 	// Subscriptions — opt in/out of specific event types per tenant and channel.
@@ -159,7 +161,7 @@ func registerRoutes(
 		Path:        "/v1/me/tenants/{tenant_id}/subscriptions",
 		Summary:     "List the user's event subscriptions for a tenant",
 		Tags:        []string{"subscriptions"},
-		Security:    surfaceBSec,
+		Security:    surfaceBFull,
 	}, me.listSubscriptions)
 
 	huma.Register(api, huma.Operation{
@@ -169,7 +171,7 @@ func registerRoutes(
 		Summary:       "Subscribe to an event type via a channel",
 		Tags:          []string{"subscriptions"},
 		DefaultStatus: http.StatusNoContent,
-		Security:      surfaceBSec,
+		Security:      surfaceBFull,
 	}, me.subscribe)
 
 	huma.Register(api, huma.Operation{
@@ -179,7 +181,7 @@ func registerRoutes(
 		Summary:       "Unsubscribe from an event type",
 		Tags:          []string{"subscriptions"},
 		DefaultStatus: http.StatusNoContent,
-		Security:      surfaceBSec,
+		Security:      surfaceBFull,
 	}, me.unsubscribe)
 
 	// Notifications — the user's in-app inbox for a tenant.
@@ -189,7 +191,7 @@ func registerRoutes(
 		Path:        "/v1/me/tenants/{tenant_id}/notifications",
 		Summary:     "List the user's in-app notifications for a tenant, newest first",
 		Tags:        []string{"notifications"},
-		Security:    surfaceBSec,
+		Security:    surfaceBInbox,
 	}, me.listNotifications)
 
 	huma.Register(api, huma.Operation{
@@ -198,7 +200,7 @@ func registerRoutes(
 		Path:        "/v1/me/tenants/{tenant_id}/notifications/unread-count",
 		Summary:     "Count unread in-app notifications for a tenant",
 		Tags:        []string{"notifications"},
-		Security:    surfaceBSec,
+		Security:    surfaceBInbox,
 	}, me.unreadCount)
 
 	huma.Register(api, huma.Operation{
@@ -207,7 +209,7 @@ func registerRoutes(
 		Path:        "/v1/me/tenants/{tenant_id}/notifications/read-all",
 		Summary:     "Mark all of the user's in-app notifications for a tenant as read",
 		Tags:        []string{"notifications"},
-		Security:    surfaceBSec,
+		Security:    surfaceBInbox,
 	}, me.markAllRead)
 
 	huma.Register(api, huma.Operation{
@@ -217,7 +219,7 @@ func registerRoutes(
 		Summary:       "Mark one in-app notification as read",
 		Tags:          []string{"notifications"},
 		DefaultStatus: http.StatusNoContent,
-		Security:      surfaceBSec,
+		Security:      surfaceBInbox,
 	}, me.markRead)
 
 	huma.Register(api, huma.Operation{
@@ -227,7 +229,7 @@ func registerRoutes(
 		Summary:       "Dismiss (hide) an in-app notification",
 		Tags:          []string{"notifications"},
 		DefaultStatus: http.StatusNoContent,
-		Security:      surfaceBSec,
+		Security:      surfaceBInbox,
 	}, me.dismissNotification)
 
 	// Notifications across every tenant.
@@ -237,7 +239,7 @@ func registerRoutes(
 		Path:        "/v1/me/notifications",
 		Summary:     "List the user's in-app notifications across tenants, newest first",
 		Tags:        []string{"notifications"},
-		Security:    surfaceBSec,
+		Security:    surfaceBInbox,
 	}, me.listAllNotifications)
 
 	huma.Register(api, huma.Operation{
@@ -246,7 +248,7 @@ func registerRoutes(
 		Path:        "/v1/me/notifications/unread-counts",
 		Summary:     "Count unread in-app notifications across tenants, in total and per tenant",
 		Tags:        []string{"notifications"},
-		Security:    surfaceBSec,
+		Security:    surfaceBInbox,
 	}, me.unreadCounts)
 
 	huma.Register(api, huma.Operation{
@@ -255,7 +257,7 @@ func registerRoutes(
 		Path:        "/v1/me/notifications/read-all",
 		Summary:     "Mark every in-app notification of every tenant as read",
 		Tags:        []string{"notifications"},
-		Security:    surfaceBSec,
+		Security:    surfaceBInbox,
 	}, me.markAllReadAllTenants)
 
 	huma.Register(api, huma.Operation{
@@ -265,7 +267,7 @@ func registerRoutes(
 		Summary:       "Mark one in-app notification of any tenant as read",
 		Tags:          []string{"notifications"},
 		DefaultStatus: http.StatusNoContent,
-		Security:      surfaceBSec,
+		Security:      surfaceBInbox,
 	}, me.markReadAnyTenant)
 
 	huma.Register(api, huma.Operation{
@@ -275,7 +277,7 @@ func registerRoutes(
 		Summary:       "Dismiss an in-app notification of any tenant",
 		Tags:          []string{"notifications"},
 		DefaultStatus: http.StatusNoContent,
-		Security:      surfaceBSec,
+		Security:      surfaceBInbox,
 	}, me.dismissAnyTenant)
 
 	// Preferences — per-user settings about how the inbox is presented.
@@ -285,7 +287,7 @@ func registerRoutes(
 		Path:        "/v1/me/preferences",
 		Summary:     "Get the user's preferences (defaults if none are stored)",
 		Tags:        []string{"preferences"},
-		Security:    surfaceBSec,
+		Security:    surfaceBFull,
 	}, me.getPreferences)
 
 	huma.Register(api, huma.Operation{
@@ -294,6 +296,6 @@ func registerRoutes(
 		Path:        "/v1/me/preferences",
 		Summary:     "Change the given preferences",
 		Tags:        []string{"preferences"},
-		Security:    surfaceBSec,
+		Security:    surfaceBFull,
 	}, me.updatePreferences)
 }

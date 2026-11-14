@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,10 +22,18 @@ var ErrInactive = errors.New("oauth: token inactive")
 
 const defaultTokenTTL = 15 * time.Minute
 
+// MetaBrainz OAuth scopes for Synapse.
+const (
+	ScopeInbox = "synapse:notifications:inbox" // notification routes and streams
+	ScopeFull  = "synapse:notifications"       // every route
+)
+
 // Claims holds the validated identity extracted from a MetaBrainz OAuth token.
 type Claims struct {
 	ID       string
 	Username string
+	Inbox    bool // token has ScopeInbox or ScopeFull
+	Full     bool // token has ScopeFull
 }
 
 // Introspector validates a Bearer token and returns the caller's identity.
@@ -33,10 +42,11 @@ type Introspector interface {
 }
 
 type introspectResponse struct {
-	Active    bool   `json:"active"`
-	Sub       string `json:"sub"`
-	Username  string `json:"username"`
-	ExpiresAt int64  `json:"expires_at"`
+	Active    bool     `json:"active"`
+	Sub       string   `json:"sub"`
+	Username  string   `json:"username"`
+	ExpiresAt int64    `json:"expires_at"`
+	Scope     []string `json:"scope"`
 }
 
 // MBIntrospector calls the MetaBrainz OAuth2 introspection endpoint.
@@ -73,12 +83,10 @@ func (m *MBIntrospector) Introspect(ctx context.Context, token string) (Claims, 
 			if cached == "" {
 				return Claims{}, ErrInactive
 			}
-			parts := strings.SplitN(cached, ":", 2)
-			c := Claims{ID: parts[0]}
-			if len(parts) == 2 {
-				c.Username = parts[1]
+			var c Claims
+			if json.Unmarshal([]byte(cached), &c) == nil {
+				return c, nil
 			}
-			return c, nil
 		} else if !errors.Is(err, redis.Nil) {
 			slog.Warn("oauth: redis cache read failed, falling through to introspection", "err", err)
 		}
@@ -125,9 +133,12 @@ func (m *MBIntrospector) Introspect(ctx context.Context, token string) (Claims, 
 		return Claims{}, ErrInactive
 	}
 
+	full := slices.Contains(ir.Scope, ScopeFull)
 	claims := Claims{
 		ID:       ir.Sub,
 		Username: ir.Username,
+		Inbox:    full || slices.Contains(ir.Scope, ScopeInbox),
+		Full:     full,
 	}
 
 	if m.rdb != nil {
@@ -137,7 +148,8 @@ func (m *MBIntrospector) Introspect(ctx context.Context, token string) (Claims, 
 			ttl = min(ttl, time.Until(time.Unix(ir.ExpiresAt, 0)))
 		}
 		if ttl > 0 {
-			if err := m.rdb.Set(ctx, cacheKey(token), claims.ID+":"+claims.Username, ttl).Err(); err != nil {
+			b, _ := json.Marshal(claims)
+			if err := m.rdb.Set(ctx, cacheKey(token), b, ttl).Err(); err != nil {
 				slog.Warn("oauth: redis cache write failed", "err", err)
 			}
 		}

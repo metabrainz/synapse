@@ -110,3 +110,35 @@ func TestMBIntrospector_ClientCredentialsToken(t *testing.T) {
 		t.Fatalf("want ErrInactive for client-credentials token, got %v", err)
 	}
 }
+
+func TestMBIntrospector_Scopes(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		scope       []string
+		inbox, full bool
+	}{
+		{"neither", []string{"profile"}, false, false},
+		{"inbox", []string{oauth.ScopeInbox}, true, false},
+		{"full", []string{oauth.ScopeFull}, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				json.NewEncoder(w).Encode(map[string]any{
+					"active":     true,
+					"sub":        "42",
+					"expires_at": time.Now().Add(time.Hour).Unix(),
+					"scope":      tc.scope,
+				})
+			}))
+			defer ts.Close()
+
+			claims, err := oauth.NewMBIntrospector("client-id", "client-secret", ts.URL, nil).Introspect(context.Background(), "tok")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if claims.Inbox != tc.inbox || claims.Full != tc.full {
+				t.Fatalf("inbox=%v full=%v, want inbox=%v full=%v", claims.Inbox, claims.Full, tc.inbox, tc.full)
+			}
+		})
+	}
+}
