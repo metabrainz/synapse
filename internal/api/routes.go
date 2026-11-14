@@ -23,9 +23,9 @@ import (
 )
 
 var (
-	surfaceASec  = []map[string][]string{{"TenantAPIKey": {}}}
-	surfaceBRead = []map[string][]string{{"UserOAuth": {oauth.ScopeRead}}}
-	surfaceBFull = []map[string][]string{{"UserOAuth": {oauth.ScopeFull}}}
+	surfaceASec   = []map[string][]string{{"TenantAPIKey": {}}}
+	surfaceBInbox = []map[string][]string{{"UserOAuth": {oauth.ScopeInbox}}}
+	surfaceBFull  = []map[string][]string{{"UserOAuth": {oauth.ScopeFull}}}
 )
 
 func registerRoutes(
@@ -191,7 +191,7 @@ func registerRoutes(
 		Path:        "/v1/me/tenants/{tenant_id}/notifications",
 		Summary:     "List the user's in-app notifications for a tenant, newest first",
 		Tags:        []string{"notifications"},
-		Security:    surfaceBRead,
+		Security:    surfaceBInbox,
 	}, me.listNotifications)
 
 	huma.Register(api, huma.Operation{
@@ -200,7 +200,7 @@ func registerRoutes(
 		Path:        "/v1/me/tenants/{tenant_id}/notifications/unread-count",
 		Summary:     "Count unread in-app notifications for a tenant",
 		Tags:        []string{"notifications"},
-		Security:    surfaceBRead,
+		Security:    surfaceBInbox,
 	}, me.unreadCount)
 
 	huma.Register(api, huma.Operation{
@@ -209,7 +209,7 @@ func registerRoutes(
 		Path:        "/v1/me/tenants/{tenant_id}/notifications/read-all",
 		Summary:     "Mark all of the user's in-app notifications for a tenant as read",
 		Tags:        []string{"notifications"},
-		Security:    surfaceBRead,
+		Security:    surfaceBInbox,
 	}, me.markAllRead)
 
 	huma.Register(api, huma.Operation{
@@ -219,7 +219,7 @@ func registerRoutes(
 		Summary:       "Mark one in-app notification as read",
 		Tags:          []string{"notifications"},
 		DefaultStatus: http.StatusNoContent,
-		Security:      surfaceBRead,
+		Security:      surfaceBInbox,
 	}, me.markRead)
 
 	huma.Register(api, huma.Operation{
@@ -229,7 +229,7 @@ func registerRoutes(
 		Summary:       "Dismiss (hide) an in-app notification",
 		Tags:          []string{"notifications"},
 		DefaultStatus: http.StatusNoContent,
-		Security:      surfaceBRead,
+		Security:      surfaceBInbox,
 	}, me.dismissNotification)
 
 	// Notifications across every tenant.
@@ -239,7 +239,7 @@ func registerRoutes(
 		Path:        "/v1/me/notifications",
 		Summary:     "List the user's in-app notifications across tenants, newest first",
 		Tags:        []string{"notifications"},
-		Security:    surfaceBRead,
+		Security:    surfaceBInbox,
 	}, me.listAllNotifications)
 
 	huma.Register(api, huma.Operation{
@@ -248,7 +248,7 @@ func registerRoutes(
 		Path:        "/v1/me/notifications/unread-counts",
 		Summary:     "Count unread in-app notifications across tenants, in total and per tenant",
 		Tags:        []string{"notifications"},
-		Security:    surfaceBRead,
+		Security:    surfaceBInbox,
 	}, me.unreadCounts)
 
 	huma.Register(api, huma.Operation{
@@ -257,7 +257,7 @@ func registerRoutes(
 		Path:        "/v1/me/notifications/read-all",
 		Summary:     "Mark every in-app notification of every tenant as read",
 		Tags:        []string{"notifications"},
-		Security:    surfaceBRead,
+		Security:    surfaceBInbox,
 	}, me.markAllReadAllTenants)
 
 	huma.Register(api, huma.Operation{
@@ -267,7 +267,7 @@ func registerRoutes(
 		Summary:       "Mark one in-app notification of any tenant as read",
 		Tags:          []string{"notifications"},
 		DefaultStatus: http.StatusNoContent,
-		Security:      surfaceBRead,
+		Security:      surfaceBInbox,
 	}, me.markReadAnyTenant)
 
 	huma.Register(api, huma.Operation{
@@ -277,7 +277,7 @@ func registerRoutes(
 		Summary:       "Dismiss an in-app notification of any tenant",
 		Tags:          []string{"notifications"},
 		DefaultStatus: http.StatusNoContent,
-		Security:      surfaceBRead,
+		Security:      surfaceBInbox,
 	}, me.dismissAnyTenant)
 
 	// Preferences — per-user settings about how the inbox is presented.

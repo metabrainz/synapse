@@ -42,7 +42,7 @@ Serves two authentication surfaces:
 
 **Surface A — tenant API key** (`/v1/events`, `/v1/events/{id}/deliveries`): internal services publish events and query delivery status. Auth is an O(1) map lookup against the static registry loaded at startup — no DB or cache involved. Routes are rate-limited per tenant via a Redis token bucket.
 
-**Surface B — MetaBrainz OAuth token** (`/v1/me/`*): end-users manage their own channels and subscriptions, read their in-app notifications (`/v1/me/tenants/{tenant}/notifications`, `/v1/me/notifications`) and change their preferences (`/v1/me/preferences`). Each request introspects the bearer token against the MB OAuth endpoint, and the token needs a restricted Synapse scope: `synapse:notifications:read` for the notification routes and streams, `synapse:notifications` for everything (403 `insufficient_scope` otherwise); results are cached in Redis (TTL = min(token expiry, 15 min)) to keep the MB endpoint off the hot path.
+**Surface B — MetaBrainz OAuth token** (`/v1/me/`*): end-users manage their own channels and subscriptions, read their in-app notifications (`/v1/me/tenants/{tenant}/notifications`, `/v1/me/notifications`) and change their preferences (`/v1/me/preferences`). Each request introspects the bearer token against the MB OAuth endpoint, and the token needs a restricted Synapse scope: `synapse:notifications:inbox` for the notification routes and streams, `synapse:notifications` for everything (403 `insufficient_scope` otherwise); results are cached in Redis (TTL = min(token expiry, 15 min)) to keep the MB endpoint off the hot path.
 
 **Stream routes** (`/v1/stream/`*): browser event streams for the inbox. They take the same OAuth token as Surface B, checked per route after CORS so an allowed page can read a 401, and answer the CORS preflight the `Authorization` header triggers. See [Live updates](#live-updates).
 
@@ -298,7 +298,7 @@ GET /v1/stream/tenants/{tenant}/notifications   Authorization: Bearer <token>   
 GET /v1/stream/notifications                    Authorization: Bearer <token>   every tenant's; 403 unless cross_tenant_notifications is on
 ```
 
-- **Auth:** the user's MetaBrainz OAuth token, checked by the same middleware as `/v1/me/*`. A missing or inactive token returns 401; a token with neither `synapse:notifications:read` nor `synapse:notifications` returns 403; a failing introspection returns 503. Clients open the stream with `fetch`, since `EventSource` can't send headers.
+- **Auth:** the user's MetaBrainz OAuth token, checked by the same middleware as `/v1/me/*`. A missing or inactive token returns 401; a token with neither `synapse:notifications:inbox` nor `synapse:notifications` returns 403; a failing introspection returns 503. Clients open the stream with `fetch`, since `EventSource` can't send headers.
 - **Events:** `event: inbox` with `data: {"kind": "created" | "changed", "tenant": "…"}`, and `event: ping` every 25 s to keep proxies from closing an idle stream. `created` is sent after an ingest commits a notification for the user; `changed` after the user reads, reads all or dismisses. The tenant stream drops nudges for other tenants.
 - **Nudges can be dropped**, so a client also refetches when it (re)connects and when the tab becomes visible. Several nudges and one nudge mean the same thing: refetch.
 - **CORS:** the response allows the request's `Origin` only if it is listed in that tenant's `tenants.<id>.stream_origins` (any tenant's for the global stream).

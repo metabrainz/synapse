@@ -32,7 +32,7 @@ func (s *stubUserRepo) Upsert(_ context.Context, _, _ string) error {
 }
 
 func TestNewUserAuth_ValidToken(t *testing.T) {
-	mw := middleware.NewUserAuth(&stubIntrospector{claims: oauth.Claims{ID: "42", Read: true, Full: true}}, &stubUserRepo{})
+	mw := middleware.NewUserAuth(&stubIntrospector{claims: oauth.Claims{ID: "42", Inbox: true, Full: true}}, &stubUserRepo{})
 
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		uid := middleware.UserFromContext(r.Context())
@@ -85,7 +85,7 @@ func TestNewUserAuth_InactiveToken(t *testing.T) {
 
 func TestNewUserAuth_UpsertError(t *testing.T) {
 	mw := middleware.NewUserAuth(
-		&stubIntrospector{claims: oauth.Claims{ID: "42", Read: true, Full: true}},
+		&stubIntrospector{claims: oauth.Claims{ID: "42", Inbox: true, Full: true}},
 		&stubUserRepo{upsertErr: errors.New("db down")},
 	)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -104,12 +104,12 @@ func TestNewUserAuth_UpsertError(t *testing.T) {
 
 func TestNewUserAuth_Scopes(t *testing.T) {
 	var (
-		none = oauth.Claims{ID: "42"}
-		read = oauth.Claims{ID: "42", Read: true}
-		full = oauth.Claims{ID: "42", Read: true, Full: true}
+		none  = oauth.Claims{ID: "42"}
+		inbox = oauth.Claims{ID: "42", Inbox: true}
+		full  = oauth.Claims{ID: "42", Inbox: true, Full: true}
 	)
 	// Per-route coverage lives in api.TestDocumentedScopesMatchEnforced.
-	readRoutes := []string{
+	inboxRoutes := []string{
 		"POST /v1/me/tenants/listenbrainz/notifications/7/read",
 		"GET /v1/me/notifications",
 		"GET /v1/stream/tenants/listenbrainz/notifications",
@@ -122,8 +122,8 @@ func TestNewUserAuth_Scopes(t *testing.T) {
 		"GET /v1/me/tenants/a%2Fnotifications/channels",
 	}
 	const (
-		readHeader = `Bearer realm="synapse", error="insufficient_scope", scope="synapse:notifications:read"`
-		fullHeader = `Bearer realm="synapse", error="insufficient_scope", scope="synapse:notifications"`
+		inboxHeader = `Bearer realm="synapse", error="insufficient_scope", scope="synapse:notifications:inbox"`
+		fullHeader  = `Bearer realm="synapse", error="insufficient_scope", scope="synapse:notifications"`
 	)
 
 	check := func(t *testing.T, claims oauth.Claims, route string, wantStatus int, wantHeader string) {
@@ -150,14 +150,14 @@ func TestNewUserAuth_Scopes(t *testing.T) {
 		}
 	}
 
-	for _, route := range readRoutes {
-		check(t, none, route, http.StatusForbidden, readHeader)
-		check(t, read, route, http.StatusOK, "")
+	for _, route := range inboxRoutes {
+		check(t, none, route, http.StatusForbidden, inboxHeader)
+		check(t, inbox, route, http.StatusOK, "")
 		check(t, full, route, http.StatusOK, "")
 	}
 	for _, route := range fullRoutes {
 		check(t, none, route, http.StatusForbidden, fullHeader)
-		check(t, read, route, http.StatusForbidden, fullHeader)
+		check(t, inbox, route, http.StatusForbidden, fullHeader)
 		check(t, full, route, http.StatusOK, "")
 	}
 }

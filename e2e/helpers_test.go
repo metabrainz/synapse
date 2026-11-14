@@ -439,7 +439,7 @@ func newStubIntrospector() *stubIntrospector {
 }
 
 func (s *stubIntrospector) grant(token, id string) {
-	s.grantClaims(token, oauth.Claims{ID: id, Read: true, Full: true})
+	s.grantClaims(token, oauth.Claims{ID: id, Inbox: true, Full: true})
 }
 
 func (s *stubIntrospector) grantClaims(token string, c oauth.Claims) {

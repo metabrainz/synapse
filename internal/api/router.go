@@ -202,7 +202,7 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 			Type:         "http",
 			Scheme:       "bearer",
 			BearerFormat: "OAuth token",
-			Description:  "MetaBrainz OAuth Bearer token — Surface B routes (/v1/me/**) and the streams (/v1/stream/**). `synapse:notifications:read` covers the notification routes and streams; `synapse:notifications` covers every route.",
+			Description:  "MetaBrainz OAuth Bearer token — Surface B routes (/v1/me/**) and the streams (/v1/stream/**). `synapse:notifications:inbox` covers the notification routes and streams; `synapse:notifications` covers every route.",
 		},
 	}
 

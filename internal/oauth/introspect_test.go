@@ -113,12 +113,12 @@ func TestMBIntrospector_ClientCredentialsToken(t *testing.T) {
 
 func TestMBIntrospector_Scopes(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		scope      []string
-		read, full bool
+		name        string
+		scope       []string
+		inbox, full bool
 	}{
 		{"neither", []string{"profile"}, false, false},
-		{"read", []string{oauth.ScopeRead}, true, false},
+		{"inbox", []string{oauth.ScopeInbox}, true, false},
 		{"full", []string{oauth.ScopeFull}, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -136,8 +136,8 @@ func TestMBIntrospector_Scopes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if claims.Read != tc.read || claims.Full != tc.full {
-				t.Fatalf("read=%v full=%v, want read=%v full=%v", claims.Read, claims.Full, tc.read, tc.full)
+			if claims.Inbox != tc.inbox || claims.Full != tc.full {
+				t.Fatalf("inbox=%v full=%v, want inbox=%v full=%v", claims.Inbox, claims.Full, tc.inbox, tc.full)
 			}
 		})
 	}

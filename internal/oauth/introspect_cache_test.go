@@ -71,15 +71,15 @@ func TestMBIntrospector_CacheKeepsScope(t *testing.T) {
 			"sub":        "42",
 			"username":   "testuser",
 			"expires_at": time.Now().Add(time.Hour).Unix(),
-			"scope":      []string{oauth.ScopeRead},
+			"scope":      []string{oauth.ScopeInbox},
 		})
 	}))
 	defer ts.Close()
 
 	i := oauth.NewMBIntrospector("client-id", "client-secret", ts.URL, rdb)
-	want := oauth.Claims{ID: "42", Username: "testuser", Read: true}
+	want := oauth.Claims{ID: "42", Username: "testuser", Inbox: true}
 	for range 2 {
-		if got, err := i.Introspect(ctx, "read-token"); err != nil || got != want {
+		if got, err := i.Introspect(ctx, "inbox-token"); err != nil || got != want {
 			t.Fatalf("got %+v, %v; want %+v", got, err, want)
 		}
 	}

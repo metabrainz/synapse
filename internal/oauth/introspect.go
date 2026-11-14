@@ -24,15 +24,15 @@ const defaultTokenTTL = 15 * time.Minute
 
 // MetaBrainz OAuth scopes for Synapse.
 const (
-	ScopeRead = "synapse:notifications:read" // notification routes and streams
-	ScopeFull = "synapse:notifications"      // every route
+	ScopeInbox = "synapse:notifications:inbox" // notification routes and streams
+	ScopeFull  = "synapse:notifications"       // every route
 )
 
 // Claims holds the validated identity extracted from a MetaBrainz OAuth token.
 type Claims struct {
 	ID       string
 	Username string
-	Read     bool // token has ScopeRead or ScopeFull
+	Inbox    bool // token has ScopeInbox or ScopeFull
 	Full     bool // token has ScopeFull
 }
 
@@ -137,7 +137,7 @@ func (m *MBIntrospector) Introspect(ctx context.Context, token string) (Claims, 
 	claims := Claims{
 		ID:       ir.Sub,
 		Username: ir.Username,
-		Read:     full || slices.Contains(ir.Scope, ScopeRead),
+		Inbox:    full || slices.Contains(ir.Scope, ScopeInbox),
 		Full:     full,
 	}
 

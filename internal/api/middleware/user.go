@@ -53,7 +53,7 @@ func NewUserAuth(i oauth.Introspector, repo UserRepo) func(http.Handler) http.Ha
 
 			// EscapedPath is what chi routes on.
 			scope := RequiredScope(r.URL.EscapedPath())
-			if !claims.Full && !(scope == oauth.ScopeRead && claims.Read) {
+			if !claims.Full && !(scope == oauth.ScopeInbox && claims.Inbox) {
 				w.Header().Set("WWW-Authenticate", `Bearer realm="synapse", error="insufficient_scope", scope="`+scope+`"`)
 				writeJSONError(w, http.StatusForbidden, "insufficient scope")
 				return
@@ -71,11 +71,11 @@ func NewUserAuth(i oauth.Introspector, repo UserRepo) func(http.Handler) http.Ha
 	}
 }
 
-// RequiredScope returns the OAuth scope a request path needs: oauth.ScopeRead
+// RequiredScope returns the OAuth scope a request path needs: oauth.ScopeInbox
 // for the notification routes and streams, oauth.ScopeFull for everything else.
 func RequiredScope(path string) string {
 	if strings.HasPrefix(path, "/v1/stream/") {
-		return oauth.ScopeRead
+		return oauth.ScopeInbox
 	}
 	rest, ok := strings.CutPrefix(path, "/v1/me/")
 	if !ok {
@@ -85,7 +85,7 @@ func RequiredScope(path string) string {
 		_, rest, _ = strings.Cut(t, "/")
 	}
 	if rest == "notifications" || strings.HasPrefix(rest, "notifications/") {
-		return oauth.ScopeRead
+		return oauth.ScopeInbox
 	}
 	return oauth.ScopeFull
 }
