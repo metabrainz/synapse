@@ -30,7 +30,7 @@ func (followEvent) Telegram() string      { return `{{str .Payload "actor" "user
 | `email_from` | Sender address; email deliveries fail without it. |
 | `notification_settings_url` | Settings link in emails. |
 | `in_app_retention_days` | Inbox lifetime of a notification. Default 30. |
-| `stream_origins` | Browser origins allowed to open the live stream. Exact match, one per environment. |
+| `stream_origins` | Browser origins allowed to call `/v1/me/*` and open the live stream. Exact match, one per environment. |
 
 ## 2. Publish events
 
@@ -77,6 +77,8 @@ Both scopes are restricted: ask a MetaBrainz admin to grant them to your OAuth c
 | Open one | `POST /v1/me/tenants/{tenant}/notifications/{id}/read` |
 | Mark all read | `POST /v1/me/tenants/{tenant}/notifications/read-all` |
 | Remove | `DELETE /v1/me/tenants/{tenant}/notifications/{id}` |
+
+Your page can call these routes directly if its origin is in `stream_origins`. Responses carry `Access-Control-Allow-Origin` for an allowed origin, 401 and 403 included, so the page can refresh its token or hide the bell. The preflight needs no token and answers `204`, allowing `GET`, `POST`, `PUT`, `PATCH` and `DELETE` with the `Authorization` and `Content-Type` headers, cached for 600 s. Cookies are never allowed. Routes without a tenant in the path, such as `/v1/me/channels`, allow any tenant's origins.
 
 A notification has `id`, `event_type`, `payload`, `created_at`, `expires_at`, and `read_at` once read. Skip unknown `event_type`s so a new type doesn't break an older frontend.
 

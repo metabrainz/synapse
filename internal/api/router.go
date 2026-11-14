@@ -102,10 +102,17 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 		})
 	}
 
+	origins := corsOrigins(cfg.StreamOrigins)
+	meCORS := origins.middleware(d.Registry, tenantAfter("/v1/me/tenants/"),
+		[]string{"GET", "POST", "PUT", "PATCH", "DELETE"}, []string{"Authorization", "Content-Type"})
+	streamCORS := origins.middleware(d.Registry, tenantAfter("/v1/stream/tenants/"),
+		[]string{"GET"}, []string{"Authorization"})
+
 	// Path-dispatching middleware: applies Surface A or B auth + rate limiting based on
-	// URL prefix. /v1/me/** → Surface B (OAuth); /v1/stream/** applies CORS and
-	// OAuth per route; /v1/** → Surface A (tenant API key); everything else
-	// (health check, internal adapter routes) passes through unauthenticated.
+	// URL prefix. /v1/me/** and /v1/stream/** → CORS, then Surface B (OAuth);
+	// /v1/** → Surface A (tenant API key); everything else (health check,
+	// internal adapter routes) passes through unauthenticated. CORS answers the
+	// preflight before auth.
 	//
 	// Auth runs before rate limiting so the rate-limit key function can read the
 	// tenant/user ID set in context by auth.
@@ -121,7 +128,8 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 		}
 		surfaceA := authMW(surfaceAInner)
 
-		surfaceB := userMW(userLimit(next))
+		surfaceB := meCORS(userMW(userLimit(next)))
+		stream := streamCORS(userMW(userLimit(next)))
 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			p := r.URL.Path
@@ -129,7 +137,7 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 			case strings.HasPrefix(p, "/v1/me"):
 				surfaceB.ServeHTTP(w, r)
 			case strings.HasPrefix(p, "/v1/stream/"):
-				next.ServeHTTP(w, r)
+				stream.ServeHTTP(w, r)
 			case strings.HasPrefix(p, "/v1/"):
 				surfaceA.ServeHTTP(w, r)
 			default:
@@ -165,17 +173,9 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 	if lifetime == 0 {
 		lifetime = 15 * time.Minute
 	}
-	stream := &streamHandler{hub: d.Hub, prefs: d.Preferences, reg: d.Registry, origins: cfg.StreamOrigins, ping: ping, lifetime: lifetime}
-	for _, rt := range []struct {
-		path string
-		h    http.HandlerFunc
-	}{
-		{"/v1/stream/tenants/{tenant_id}/notifications", stream.tenant},
-		{"/v1/stream/notifications", stream.global},
-	} {
-		r.With(stream.allowOrigin, userMW, userLimit).Get(rt.path, rt.h)
-		r.With(stream.allowOrigin).Options(rt.path, stream.preflight)
-	}
+	stream := &streamHandler{hub: d.Hub, prefs: d.Preferences, reg: d.Registry, ping: ping, lifetime: lifetime}
+	r.Get("/v1/stream/tenants/{tenant_id}/notifications", stream.tenant)
+	r.Get("/v1/stream/notifications", stream.global)
 
 	// Huma API — generates OpenAPI spec from handler types.
 	// Spec: GET /openapi.json   Swagger UI: GET /docs

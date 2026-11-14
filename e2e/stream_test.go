@@ -292,13 +292,16 @@ func TestStreamCORSPreflight(t *testing.T) {
 	for k, want := range map[string]string{
 		"Access-Control-Allow-Origin":  lbOrigin,
 		"Access-Control-Allow-Methods": "GET",
-		"Access-Control-Allow-Headers": "Authorization",
+		"Access-Control-Allow-Headers": "authorization",
 		"Access-Control-Max-Age":       "600",
-		"Vary":                         "Origin",
 	} {
 		if got := resp.Header.Get(k); got != want {
 			t.Errorf("%s: want %q, got %q", k, want, got)
 		}
+	}
+
+	if vary := strings.Join(resp.Header.Values("Vary"), ","); !strings.Contains(vary, "Origin") {
+		t.Errorf("Vary: want Origin, got %q", vary)
 	}
 
 	if got := preflight(globalStreamPath, lbOrigin).Header.Get("Access-Control-Allow-Origin"); got != lbOrigin {
