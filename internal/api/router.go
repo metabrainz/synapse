@@ -207,6 +207,7 @@ func NewRouter(cfg Config, d Deps) http.Handler {
 	}
 
 	registerRoutes(api, d.Pool, d.Fanout, d.Registry, d.UserChannels, d.TenantMappings, d.Subscriptions, d.Notifications, d.Preferences, d.Live)
+	addEventSchemas(spec, d.Registry)
 
 	for _, ct := range adapter.ChannelTypes() {
 		if rp, ok := adapter.Registry[ct].(adapter.RouteProvider); ok {
