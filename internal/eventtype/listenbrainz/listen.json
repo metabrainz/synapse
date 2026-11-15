@@ -65,7 +65,7 @@
       "additionalProperties": false
     },
     "recording": {
-      "title": "Recording",
+      "title": "ListenRecording",
       "type": "object",
       "required": [
         "track_name",

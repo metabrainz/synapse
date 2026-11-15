@@ -27,7 +27,7 @@ type ingestHandler struct {
 type ingestRequestBody struct {
 	Recipients     []string   `json:"recipients" doc:"User IDs to deliver this event to" minItems:"1"`
 	EventType      string     `json:"event_type" doc:"Tenant-specific event type identifier" minLength:"1"`
-	Payload        JSONObject `json:"payload,omitempty" doc:"Event-specific payload; shape is defined per event type"`
+	Payload        JSONObject `json:"payload,omitempty" doc:"Event-specific payload, validated against the <tenant>.<event_type> schema"`
 	IdempotencyKey *string    `json:"idempotency_key,omitempty" doc:"Client-supplied deduplication key"`
 }
 
