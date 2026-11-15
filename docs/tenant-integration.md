@@ -21,7 +21,7 @@ func (followEvent) Telegram() string      { return `{{str .Payload "actor" "user
 - Include `ChannelInApp` for events that belong in the inbox.
 - An event that allows Telegram must implement `Telegram()`; startup panics otherwise.
 - List every event in the tenant's `All` slice and add the tenant to `KnownTenants` in `internal/eventtype/registry.go`.
-- Each schema is published in `/openapi.json` as the component `<tenant>.<event_type>`, so you can generate payload types from it.
+- Each schema is published in `/openapi.json` as the component `<tenant>.<event_type>`, so you can generate payload types from it. `openapi-typescript` turns the schema's `$defs` into a property, so use `Omit<components["schemas"]["<tenant>.<event_type>"], "$defs">` as the payload type.
 
 **Config** — `tenants.<id>` in `config.yaml`:
 
