@@ -18,7 +18,6 @@ import (
 	"github.com/metabrainz/synapse/internal/observability"
 	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/subscriptions"
-	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -87,7 +86,7 @@ func main() {
 	fan := fanout.New(cache, adapter.MaxAttemptsFor, reg).
 		WithExpiry(fanout.NewExpiry(cfg.TenantInAppRetentionDays()))
 	// No ping: publishing is best-effort, ingest must not depend on Redis.
-	rdb := redis.NewClient(&redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB})
+	rdb := store.NewRedisClient(cfg.Redis)
 	defer rdb.Close()
 
 	consumer := ingest.NewConsumer(pool, fan, reg, live.NewPublisher(rdb))

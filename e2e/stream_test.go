@@ -14,11 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/metabrainz/synapse/internal/api"
 	"github.com/metabrainz/synapse/internal/live"
 	"github.com/metabrainz/synapse/internal/ratelimit"
+	"github.com/metabrainz/synapse/internal/store"
 )
 
 const lbOrigin = "https://listenbrainz.org"
@@ -251,7 +250,7 @@ func TestStreamIntrospectionDown(t *testing.T) {
 }
 
 func TestStreamOpensAreRateLimited(t *testing.T) {
-	e := setup(t, func(c *api.Config, rdb *redis.Client) { c.Limiter = ratelimit.New(rdb, 2, 1) })
+	e := setup(t, func(c *api.Config, rdb *store.Redis) { c.Limiter = ratelimit.New(rdb, 2, 1) })
 	tok := e.token("alice")
 	for range 2 {
 		e.openOK(tenantStreamPath, tok)
@@ -376,7 +375,7 @@ func TestStreamEndToEnd(t *testing.T) {
 }
 
 func TestStreamDeliversToManyStreams(t *testing.T) {
-	e := setup(t, func(c *api.Config, _ *redis.Client) { c.StreamLifetime = time.Minute })
+	e := setup(t, func(c *api.Config, _ *store.Redis) { c.StreamLifetime = time.Minute })
 	const users = 2000
 	got := make([]chan string, users)
 	var wg sync.WaitGroup

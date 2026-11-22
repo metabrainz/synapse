@@ -8,34 +8,34 @@ import (
 	"testing"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/metabrainz/synapse/internal/live"
+	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/testutil"
+	"github.com/redis/go-redis/v9"
 )
 
-func startRedis(t *testing.T) *redis.Client {
+func startRedis(t *testing.T) *store.Redis {
 	t.Helper()
 	addr, cleanup, err := testutil.StartRedis(context.Background())
 	if err != nil {
 		t.Fatalf("start redis: %v", err)
 	}
 	t.Cleanup(cleanup)
-	rdb := redis.NewClient(&redis.Options{Addr: addr})
+	rdb := store.WrapRedis(redis.NewClient(&redis.Options{Addr: addr}), "")
 	t.Cleanup(func() { rdb.Close() })
 	return rdb
 }
 
-func deadRedis(t *testing.T) *redis.Client {
+func deadRedis(t *testing.T) *store.Redis {
 	t.Helper()
-	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1})
+	rdb := store.WrapRedis(redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1}), "")
 	t.Cleanup(func() { rdb.Close() })
 	return rdb
 }
 
-func subscribe(t *testing.T, rdb *redis.Client, user string) <-chan *redis.Message {
+func subscribe(t *testing.T, rdb *store.Redis, user string) <-chan *redis.Message {
 	t.Helper()
-	sub := rdb.Subscribe(context.Background(), live.Channel(user))
+	sub := rdb.Subscribe(context.Background(), live.Channel("", user))
 	t.Cleanup(func() { sub.Close() })
 	if _, err := sub.Receive(context.Background()); err != nil {
 		t.Fatalf("subscribe: %v", err)

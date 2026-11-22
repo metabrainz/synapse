@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/metabrainz/synapse/internal/oauth"
+	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/testutil"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestMBIntrospector_CacheCappedAt15Minutes(t *testing.T) {
@@ -36,7 +36,7 @@ func TestMBIntrospector_CacheCappedAt15Minutes(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	i := oauth.NewMBIntrospector("client-id", "client-secret", ts.URL, rdb)
+	i := oauth.NewMBIntrospector("client-id", "client-secret", ts.URL, store.WrapRedis(rdb, ""))
 	if _, err := i.Introspect(ctx, "valid-token"); err != nil {
 		t.Fatalf("introspect: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestMBIntrospector_CacheKeepsScope(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	i := oauth.NewMBIntrospector("client-id", "client-secret", ts.URL, rdb)
+	i := oauth.NewMBIntrospector("client-id", "client-secret", ts.URL, store.WrapRedis(rdb, ""))
 	want := oauth.Claims{ID: "42", Username: "testuser", Inbox: true}
 	for range 2 {
 		if got, err := i.Introspect(ctx, "inbox-token"); err != nil || got != want {
@@ -85,5 +85,37 @@ func TestMBIntrospector_CacheKeepsScope(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("want 1 introspection call, got %d", calls)
+	}
+}
+
+func TestMBIntrospector_CacheKeyFollowsNamespace(t *testing.T) {
+	ctx := context.Background()
+	addr, cleanup, err := testutil.StartRedis(ctx)
+	if err != nil {
+		t.Fatalf("start redis: %v", err)
+	}
+	t.Cleanup(cleanup)
+	rdb := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { rdb.Close() })
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"active":     true,
+			"sub":        "42",
+			"username":   "testuser",
+			"expires_at": time.Now().Add(time.Hour).Unix(),
+		})
+	}))
+	defer ts.Close()
+
+	i := oauth.NewMBIntrospector("client-id", "client-secret", ts.URL, store.WrapRedis(rdb, "test"))
+	if _, err := i.Introspect(ctx, "valid-token"); err != nil {
+		t.Fatalf("introspect: %v", err)
+	}
+	if keys, _ := rdb.Keys(ctx, "test:oauth:token:*").Result(); len(keys) != 1 {
+		t.Fatalf("want one key under the namespace, got %v", keys)
+	}
+	if keys, _ := rdb.Keys(ctx, "oauth:token:*").Result(); len(keys) != 0 {
+		t.Fatalf("token cached outside the namespace: %v", keys)
 	}
 }

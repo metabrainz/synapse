@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/metabrainz/synapse/internal/store"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -52,21 +53,22 @@ return 1
 `)
 
 type Limiter struct {
-	rdb   *redis.Client
+	rdb   *store.Redis
 	burst int
 	rate  int // tokens per second
 }
 
 // New creates a token bucket limiter. burst is max concurrent tokens; ratePerSec is sustained fill rate.
-func New(rdb *redis.Client, burst, ratePerSec int) *Limiter {
+func New(rdb *store.Redis, burst, ratePerSec int) *Limiter {
 	return &Limiter{rdb: rdb, burst: burst, rate: ratePerSec}
 }
 
 // AllowKey runs the token bucket against an arbitrary Redis key.
-// Use this when the caller manages its own key namespace (e.g. adapter-level limiters).
+// Use this when the caller manages its own key names (e.g. adapter-level limiters).
+// The Limiter's Redis namespace is applied on top.
 func (l *Limiter) AllowKey(ctx context.Context, key string) (bool, error) {
 	nowNs := time.Now().UnixNano()
-	result, err := tokenBucketScript.Run(ctx, l.rdb, []string{key},
+	result, err := tokenBucketScript.Run(ctx, l.rdb, []string{l.rdb.Name(key)},
 		l.burst, l.rate, nowNs,
 	).Int()
 	if err != nil {

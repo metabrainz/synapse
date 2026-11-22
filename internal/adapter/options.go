@@ -2,7 +2,7 @@ package adapter
 
 import (
 	"github.com/metabrainz/synapse/internal/eventtype"
-	"github.com/redis/go-redis/v9"
+	"github.com/metabrainz/synapse/internal/store"
 )
 
 // TelegramOptions configures the Telegram adapter.
@@ -33,7 +33,7 @@ type Options struct {
 	Webhook     WebhookOptions
 	Telegram    TelegramOptions
 	MailService MailServiceOptions
-	Redis       *redis.Client
+	Redis       *store.Redis
 	// Registry supplies event templates to the Telegram adapter.
 	Registry *eventtype.Registry
 }

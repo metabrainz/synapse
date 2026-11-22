@@ -9,7 +9,7 @@ import (
 
 	"github.com/metabrainz/synapse/internal/eventtype"
 	"github.com/metabrainz/synapse/internal/fanout"
-	"github.com/redis/go-redis/v9"
+	"github.com/metabrainz/synapse/internal/store"
 )
 
 type channelConfig struct {
@@ -29,7 +29,7 @@ type Adapter struct {
 // New creates the Telegram adapter.
 // rdb may be nil; when nil, the per-chat and global rate limit pre-checks are
 // skipped (the adapter still handles 429 responses from the API gracefully).
-func New(botToken, webhookURL, webhookSecret string, rdb *redis.Client, reg *eventtype.Registry) *Adapter {
+func New(botToken, webhookURL, webhookSecret string, rdb *store.Redis, reg *eventtype.Registry) *Adapter {
 	a := &Adapter{
 		bot:        NewBot(botToken),
 		webhookURL: webhookURL,

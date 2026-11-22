@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/metabrainz/synapse/internal/store"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -34,7 +35,7 @@ type userStreams struct {
 // Hub fans nudges from one shared Redis PubSub connection out to this
 // instance's open streams. Maps are keyed by Redis channel name.
 type Hub struct {
-	rdb *redis.Client
+	rdb *store.Redis
 
 	mu      sync.Mutex
 	ps      *redis.PubSub
@@ -47,16 +48,16 @@ type Hub struct {
 
 // NewHub gives the hub its own Redis client pinned to RESP2. With go-redis's
 // default RESP3, the hub lost nudges once thousands of users had streams open.
-func NewHub(rdb *redis.Client) *Hub {
+func NewHub(rdb *store.Redis) *Hub {
 	o := rdb.Options()
-	sub := redis.NewClient(&redis.Options{
+	sub := store.WrapRedis(redis.NewClient(&redis.Options{
 		Addr:      o.Addr,
 		Username:  o.Username,
 		Password:  o.Password,
 		DB:        o.DB,
 		TLSConfig: o.TLSConfig,
 		Protocol:  2,
-	})
+	}), rdb.Namespace)
 	return &Hub{
 		rdb:         sub,
 		ps:          sub.Subscribe(context.Background()),
@@ -132,7 +133,7 @@ func (h *Hub) Run(ctx context.Context) {
 // Register returns once Redis has confirmed the user's subscription, so a
 // nudge published after it returns is delivered.
 func (h *Hub) Register(ctx context.Context, userID string) (<-chan Nudge, func(), error) {
-	channel := Channel(userID)
+	channel := Channel(h.rdb.Namespace, userID)
 
 	h.mu.Lock()
 	if h.closed {

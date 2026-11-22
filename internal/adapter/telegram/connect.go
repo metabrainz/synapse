@@ -13,8 +13,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/metabrainz/synapse/internal/api/middleware"
+	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
-	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -27,13 +27,18 @@ const (
 
 type connectHandler struct {
 	bot      *Bot
-	rdb      *redis.Client
+	rdb      *store.Redis
 	channels *userchannels.Repo
 	secret   string
 }
 
-func connectKey(token string) string     { return "synapse:tg:connect:" + token }
-func connectDoneKey(token string) string { return "synapse:tg:connect:done:" + token }
+func (h *connectHandler) connectKey(token string) string {
+	return h.rdb.Name("synapse:tg:connect:" + token)
+}
+
+func (h *connectHandler) connectDoneKey(token string) string {
+	return h.rdb.Name("synapse:tg:connect:done:" + token)
+}
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -56,7 +61,7 @@ func requireUser(w http.ResponseWriter, r *http.Request) (string, bool) {
 
 // MountRoutes registers the Telegram connect flow under the given root router.
 // It is a no-op if the adapter has no bot configured.
-func (a *Adapter) MountRoutes(r chi.Router, userMW func(http.Handler) http.Handler, rdb *redis.Client, channels *userchannels.Repo) {
+func (a *Adapter) MountRoutes(r chi.Router, userMW func(http.Handler) http.Handler, rdb *store.Redis, channels *userchannels.Repo) {
 	if a.bot == nil {
 		return
 	}
@@ -84,7 +89,7 @@ func (h *connectHandler) initiate(w http.ResponseWriter, req *http.Request) {
 	token := hex.EncodeToString(raw)
 
 	ctx := req.Context()
-	if err := h.rdb.Set(ctx, connectKey(token), uid, connectTTL).Err(); err != nil {
+	if err := h.rdb.Set(ctx, h.connectKey(token), uid, connectTTL).Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "token storage failed")
 		return
 	}
@@ -113,12 +118,12 @@ func (h *connectHandler) status(w http.ResponseWriter, req *http.Request) {
 	token := chi.URLParam(req, "token")
 	ctx := req.Context()
 
-	if owner, err := h.rdb.Get(ctx, connectKey(token)).Result(); err == nil && owner != uid {
+	if owner, err := h.rdb.Get(ctx, h.connectKey(token)).Result(); err == nil && owner != uid {
 		writeError(w, http.StatusForbidden, "token does not belong to this user")
 		return
 	}
 
-	channelID, err := h.rdb.Get(ctx, connectDoneKey(token)).Result()
+	channelID, err := h.rdb.Get(ctx, h.connectDoneKey(token)).Result()
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "pending"})
 		return
@@ -177,7 +182,7 @@ func (h *connectHandler) webhook(w http.ResponseWriter, req *http.Request) {
 }
 
 func (h *connectHandler) handleConnect(ctx context.Context, chatID, token, firstName string) {
-	userID, err := h.rdb.GetDel(ctx, connectKey(token)).Result()
+	userID, err := h.rdb.GetDel(ctx, h.connectKey(token)).Result()
 	if err != nil {
 		_ = h.bot.Send(ctx, chatID, "This link has expired or is invalid. Please generate a new one from the Synapse UI.")
 		return
@@ -200,6 +205,6 @@ func (h *connectHandler) handleConnect(ctx context.Context, chatID, token, first
 		return
 	}
 
-	h.rdb.Set(ctx, connectDoneKey(token), strconv.FormatInt(channelID, 10), connectTTL)
+	h.rdb.Set(ctx, h.connectDoneKey(token), strconv.FormatInt(channelID, 10), connectTTL)
 	_ = h.bot.Send(ctx, chatID, "✓ Connected! You'll receive Synapse notifications here.")
 }

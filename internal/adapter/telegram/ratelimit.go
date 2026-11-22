@@ -20,7 +20,7 @@ import (
 
 	"github.com/metabrainz/synapse/internal/fanout"
 	"github.com/metabrainz/synapse/internal/ratelimit"
-	"github.com/redis/go-redis/v9"
+	"github.com/metabrainz/synapse/internal/store"
 )
 
 const (
@@ -33,7 +33,7 @@ type rateLimiter struct {
 	global  *ratelimit.Limiter // burst=30, rate=30/s — key: synapse:rl:tg:global
 }
 
-func newRateLimiter(rdb *redis.Client) *rateLimiter {
+func newRateLimiter(rdb *store.Redis) *rateLimiter {
 	return &rateLimiter{
 		perChat: ratelimit.New(rdb, perChatRate, perChatRate),
 		global:  ratelimit.New(rdb, globalRate, globalRate),

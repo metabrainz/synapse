@@ -15,7 +15,7 @@ import (
 
 func (e *env) subscribe(user string) <-chan live.Nudge {
 	e.t.Helper()
-	sub := e.rdb.Subscribe(e.ctx, live.Channel(user))
+	sub := e.rdb.Subscribe(e.ctx, live.Channel(e.rdb.Namespace, user))
 	e.t.Cleanup(func() { sub.Close() })
 	if _, err := sub.Receive(e.ctx); err != nil {
 		e.t.Fatalf("subscribe: %v", err)

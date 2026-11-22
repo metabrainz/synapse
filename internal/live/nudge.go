@@ -1,5 +1,7 @@
 package live
 
+import "github.com/metabrainz/synapse/internal/store"
+
 type Kind string
 
 const (
@@ -13,6 +15,7 @@ type Nudge struct {
 	Tenant string `json:"tenant"`
 }
 
-func Channel(userID string) string {
-	return "synapse:inbox:" + userID
+// Channel is the user's pub/sub channel inside a Redis namespace.
+func Channel(ns store.Namespace, userID string) string {
+	return ns.Name("synapse:inbox:" + userID)
 }
