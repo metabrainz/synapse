@@ -158,6 +158,7 @@ func applyEnv(cfg *Config) error {
 	str(&cfg.Postgres.DBName, "SYNAPSE_PG_DBNAME")
 	str(&cfg.Postgres.DirectDSN, "SYNAPSE_PG_DIRECT_DSN")
 	str(&cfg.Redis.Addr, "SYNAPSE_REDIS_ADDR")
+	str(&cfg.Redis.Namespace, "SYNAPSE_REDIS_NAMESPACE")
 	str(&cfg.RabbitMQ.URL, "SYNAPSE_RABBITMQ_URL")
 	str(&cfg.OAuth.ClientID, "SYNAPSE_OAUTH_CLIENT_ID")
 	str(&cfg.OAuth.ClientSecret, "SYNAPSE_OAUTH_CLIENT_SECRET")

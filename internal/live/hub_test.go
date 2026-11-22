@@ -9,12 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/metabrainz/synapse/internal/live"
+	"github.com/metabrainz/synapse/internal/store"
 )
 
-func startHub(t *testing.T) (*redis.Client, *live.Hub, *live.Publisher) {
+func startHub(t *testing.T) (*store.Redis, *live.Hub, *live.Publisher) {
 	t.Helper()
 	rdb := startRedis(t)
 	hub := live.NewHub(rdb)
@@ -42,16 +41,16 @@ func register(t *testing.T, hub *live.Hub, user string) (<-chan live.Nudge, func
 	return ch, unregister
 }
 
-func numSub(t *testing.T, rdb *redis.Client, user string) int64 {
+func numSub(t *testing.T, rdb *store.Redis, user string) int64 {
 	t.Helper()
-	res, err := rdb.PubSubNumSub(context.Background(), live.Channel(user)).Result()
+	res, err := rdb.PubSubNumSub(context.Background(), live.Channel("", user)).Result()
 	if err != nil {
 		t.Fatalf("numsub: %v", err)
 	}
-	return res[live.Channel(user)]
+	return res[live.Channel("", user)]
 }
 
-func waitNumSub(t *testing.T, rdb *redis.Client, user string, want int64) {
+func waitNumSub(t *testing.T, rdb *store.Redis, user string, want int64) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {

@@ -17,9 +17,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	amqp "github.com/rabbitmq/amqp091-go"
-	"github.com/redis/go-redis/v9"
-
 	"github.com/metabrainz/synapse/internal/adapter"
 	"github.com/metabrainz/synapse/internal/api"
 	"github.com/metabrainz/synapse/internal/broker"
@@ -40,6 +37,7 @@ import (
 	"github.com/metabrainz/synapse/internal/store/usertenant"
 	"github.com/metabrainz/synapse/internal/worker"
 	"github.com/metabrainz/synapse/testutil"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 const (
@@ -52,7 +50,7 @@ type env struct {
 	ctx     context.Context
 	t       *testing.T
 	pool    *pgxpool.Pool
-	rdb     *redis.Client
+	rdb     *store.Redis
 	server  *httptest.Server
 	amqpURL string
 	apiKey  string         // static tenant API key for testTenantID
@@ -66,7 +64,7 @@ type env struct {
 // wires the full HTTP router, and returns a ready env. Cleanup is registered via
 // t.Cleanup in LIFO order: cancel → pool.Close → container teardown.
 // setup builds the test environment; opts adjust the API config.
-func setup(t *testing.T, opts ...func(*api.Config, *redis.Client)) *env {
+func setup(t *testing.T, opts ...func(*api.Config, *store.Redis)) *env {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -106,7 +104,7 @@ func setup(t *testing.T, opts ...func(*api.Config, *redis.Client)) *env {
 		t.Fatalf("rabbitmq topology: %v", err)
 	}
 
-	rdb, err := store.NewRedis(ctx, config.RedisConfig{Addr: rdbAddr})
+	rdb, err := store.NewRedis(ctx, config.RedisConfig{Addr: rdbAddr, Namespace: "e2e"})
 	if err != nil {
 		t.Fatalf("redis client: %v", err)
 	}

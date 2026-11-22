@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/metabrainz/synapse/internal/store"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -54,12 +55,12 @@ type MBIntrospector struct {
 	clientID     string
 	clientSecret string
 	endpoint     string
-	rdb          *redis.Client
+	rdb          *store.Redis
 	httpClient   *http.Client
 }
 
 // NewMBIntrospector constructs a MBIntrospector.
-func NewMBIntrospector(clientID, clientSecret, endpoint string, rdb *redis.Client) *MBIntrospector {
+func NewMBIntrospector(clientID, clientSecret, endpoint string, rdb *store.Redis) *MBIntrospector {
 	return &MBIntrospector{
 		clientID:     clientID,
 		clientSecret: clientSecret,
@@ -69,9 +70,9 @@ func NewMBIntrospector(clientID, clientSecret, endpoint string, rdb *redis.Clien
 	}
 }
 
-func cacheKey(token string) string {
+func (m *MBIntrospector) cacheKey(token string) string {
 	h := sha256.Sum256([]byte(token))
-	return "oauth:token:" + hex.EncodeToString(h[:])
+	return m.rdb.Name("oauth:token:" + hex.EncodeToString(h[:]))
 }
 
 // Introspect validates the given token against the MetaBrainz introspection endpoint.
@@ -79,7 +80,7 @@ func cacheKey(token string) string {
 // or a wrapped error for network/protocol failures.
 func (m *MBIntrospector) Introspect(ctx context.Context, token string) (Claims, error) {
 	if m.rdb != nil {
-		if cached, err := m.rdb.Get(ctx, cacheKey(token)).Result(); err == nil {
+		if cached, err := m.rdb.Get(ctx, m.cacheKey(token)).Result(); err == nil {
 			if cached == "" {
 				return Claims{}, ErrInactive
 			}
@@ -126,7 +127,7 @@ func (m *MBIntrospector) Introspect(ctx context.Context, token string) (Claims, 
 	if !ir.Active || (ir.ExpiresAt > 0 && time.Now().Unix() > ir.ExpiresAt) ||
 		ir.Sub == "" || ir.Sub == "-1" {
 		if m.rdb != nil {
-			if err := m.rdb.Set(ctx, cacheKey(token), "", 30*time.Second).Err(); err != nil {
+			if err := m.rdb.Set(ctx, m.cacheKey(token), "", 30*time.Second).Err(); err != nil {
 				slog.Warn("oauth: redis cache write failed", "err", err)
 			}
 		}
@@ -149,7 +150,7 @@ func (m *MBIntrospector) Introspect(ctx context.Context, token string) (Claims, 
 		}
 		if ttl > 0 {
 			b, _ := json.Marshal(claims)
-			if err := m.rdb.Set(ctx, cacheKey(token), b, ttl).Err(); err != nil {
+			if err := m.rdb.Set(ctx, m.cacheKey(token), b, ttl).Err(); err != nil {
 				slog.Warn("oauth: redis cache write failed", "err", err)
 			}
 		}

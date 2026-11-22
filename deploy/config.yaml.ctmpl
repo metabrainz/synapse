@@ -14,18 +14,20 @@ http:
 postgres:
   host: {{ if $pg }}{{ with index $pg 0 }}{{ .Address }}{{ end }}{{ else }}SERVICEDOESNOTEXIST_pgbouncer-master{{ end }}
   port: {{ if $pg }}{{ with index $pg 0 }}{{ .Port }}{{ end }}{{ else }}0{{ end }}
-  user: synapse
+  user: {{ template "KEY" "pg_user" }}
   password: "{{ template "KEY" "pg_password" }}"
-  dbname: synapse
+  dbname: {{ template "KEY" "pg_dbname" }}
   sslmode: disable
   pgbouncer: true
-  direct_dsn: "postgres://synapse:{{ template "KEY" "pg_password" }}@{{ if $pgdirect }}{{ with index $pgdirect 0 }}{{ .Address }}:{{ .Port }}{{ end }}{{ else }}SERVICEDOESNOTEXIST_virtual-postgres-master{{ end }}/synapse?sslmode=disable"
+  direct_dsn: "postgres://{{ template "KEY" "pg_user" }}:{{ template "KEY" "pg_password" }}@{{ if $pgdirect }}{{ with index $pgdirect 0 }}{{ .Address }}:{{ .Port }}{{ end }}{{ else }}SERVICEDOESNOTEXIST_virtual-postgres-master{{ end }}/{{ template "KEY" "pg_dbname" }}?sslmode=disable"
 
 {{ $redis := service "synapse-redis" -}}
 redis:
   addr: {{ if $redis }}{{ with index $redis 0 }}{{ .Address }}:{{ .Port }}{{ end }}{{ else }}SERVICEDOESNOTEXIST_synapse-redis{{ end }}
   password: ""
   db: 0
+  # Environments that share this Redis set a namespace so their keys and channels stay apart.
+  namespace: "{{ template "OPTKEY" "redis_namespace" }}"
 
 {{ $rmq := service "rabbitmq-listenbrainz" -}}
 rabbitmq:

@@ -7,10 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/metabrainz/synapse/internal/api"
 	"github.com/metabrainz/synapse/internal/oauth"
+	"github.com/metabrainz/synapse/internal/store"
 )
 
 const (
@@ -108,7 +107,7 @@ func TestMeCORSPreflight(t *testing.T) {
 func TestMeCORSTenantScoped(t *testing.T) {
 	const bbOrigin = "https://bookbrainz.org"
 	// The registry knows only testTenantID; "bookbrainz" exists only in the origins config.
-	e := setup(t, func(c *api.Config, _ *redis.Client) {
+	e := setup(t, func(c *api.Config, _ *store.Redis) {
 		c.StreamOrigins = map[string][]string{testTenantID: {lbOrigin}, "bookbrainz": {bbOrigin}}
 	})
 	tok := e.token("user-a")

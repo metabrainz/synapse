@@ -9,8 +9,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/metabrainz/synapse/internal/fanout"
+	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
-	"github.com/redis/go-redis/v9"
 )
 
 // Adapter delivers a single WorkerMessage to its target channel.
@@ -31,7 +31,7 @@ type Starter interface {
 // NewRouter calls MountRoutes once at startup for every registered adapter
 // that satisfies this interface.
 type RouteProvider interface {
-	MountRoutes(r chi.Router, userMW func(http.Handler) http.Handler, rdb *redis.Client, channels *userchannels.Repo)
+	MountRoutes(r chi.Router, userMW func(http.Handler) http.Handler, rdb *store.Redis, channels *userchannels.Repo)
 }
 
 // ConfigValidator is implemented by adapters that can validate a proposed channel

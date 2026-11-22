@@ -94,9 +94,10 @@ func (c PostgresConfig) URL() string {
 }
 
 type RedisConfig struct {
-	Addr     string `yaml:"addr"`
-	Password string `yaml:"password"`
-	DB       int    `yaml:"db"`
+	Addr      string `yaml:"addr"`
+	Password  string `yaml:"password"`
+	DB        int    `yaml:"db"`
+	Namespace string `yaml:"namespace"`
 }
 
 type RabbitMQConfig struct {

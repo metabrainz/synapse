@@ -21,13 +21,13 @@ import (
 	"github.com/metabrainz/synapse/internal/live"
 	"github.com/metabrainz/synapse/internal/oauth"
 	"github.com/metabrainz/synapse/internal/ratelimit"
+	"github.com/metabrainz/synapse/internal/store"
 	"github.com/metabrainz/synapse/internal/store/notifications"
 	"github.com/metabrainz/synapse/internal/store/preferences"
 	"github.com/metabrainz/synapse/internal/store/userchannels"
 	"github.com/metabrainz/synapse/internal/store/usereventsubs"
 	"github.com/metabrainz/synapse/internal/store/users"
 	"github.com/metabrainz/synapse/internal/store/usertenant"
-	"github.com/redis/go-redis/v9"
 )
 
 // HealthChecks holds optional probe functions for /health/ready.
@@ -51,7 +51,7 @@ type Config struct {
 // Deps bundles the data-layer dependencies injected into the router.
 type Deps struct {
 	Pool           *pgxpool.Pool
-	Redis          *redis.Client
+	Redis          *store.Redis
 	Users          *users.Repo
 	UserChannels   *userchannels.Repo
 	TenantMappings *usertenant.Repo
